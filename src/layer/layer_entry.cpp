@@ -15,6 +15,7 @@
 #include <cstring>
 
 #include "dispatch.hpp"
+#include "swapchain.hpp"
 
 #if defined(__GNUC__)
 #define CHOIR_EXPORT __attribute__((visibility("default")))
@@ -46,6 +47,11 @@ choir_GetInstanceProcAddr(VkInstance instance, const char* pName) {
     CHOIR_INTERCEPT(DestroyInstance);
     CHOIR_INTERCEPT(CreateDevice);
     CHOIR_INTERCEPT(DestroyDevice);
+    // Device entrypoints we hook are also resolvable through GIPA: some loaders /
+    // apps query device functions via vkGetInstanceProcAddr to build the trampoline.
+    CHOIR_INTERCEPT(CreateSwapchainKHR);
+    CHOIR_INTERCEPT(DestroySwapchainKHR);
+    CHOIR_INTERCEPT(QueuePresentKHR);
     if (std::strcmp(pName, "vkGetDeviceProcAddr") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(choir_GetDeviceProcAddr);
 #undef CHOIR_INTERCEPT
@@ -57,14 +63,20 @@ choir_GetInstanceProcAddr(VkInstance instance, const char* pName) {
     return id->disp.GetInstanceProcAddr(instance, pName);
 }
 
-// The layer's device proc-addr. Mirrors the instance variant. For the skeleton we
-// only intercept DestroyDevice; later tasks add swapchain/queue present hooks.
+// The layer's device proc-addr. Mirrors the instance variant. Intercepts
+// DestroyDevice plus the swapchain/present hooks that draw the overlay (Task 14).
 CHOIR_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
 choir_GetDeviceProcAddr(VkDevice device, const char* pName) {
     if (std::strcmp(pName, "vkGetDeviceProcAddr") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(choir_GetDeviceProcAddr);
     if (std::strcmp(pName, "vkDestroyDevice") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(choir::DestroyDevice);
+    if (std::strcmp(pName, "vkCreateSwapchainKHR") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(choir::CreateSwapchainKHR);
+    if (std::strcmp(pName, "vkDestroySwapchainKHR") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(choir::DestroySwapchainKHR);
+    if (std::strcmp(pName, "vkQueuePresentKHR") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(choir::QueuePresentKHR);
 
     if (device == VK_NULL_HANDLE) return nullptr;
     choir::DeviceData* dd = choir::device_data(device);

@@ -10,6 +10,7 @@ layer_sources = files(
   'layer_entry.cpp',
   'dispatch.cpp',
   'gating.cpp',
+  'swapchain.cpp',
 )
 
 libchoir_overlay = shared_library('choir_overlay',

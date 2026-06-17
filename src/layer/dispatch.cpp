@@ -4,6 +4,7 @@
 
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 #include "gating.hpp"
 
@@ -79,6 +80,16 @@ void load_device_dispatch(DeviceDispatch& d, VkDevice device,
     LOAD(DestroyFence);
     LOAD(WaitForFences);
     LOAD(ResetFences);
+    LOAD(CreateImageView);
+    LOAD(DestroyImageView);
+    LOAD(CreateRenderPass);
+    LOAD(DestroyRenderPass);
+    LOAD(CreateFramebuffer);
+    LOAD(DestroyFramebuffer);
+    LOAD(CmdBeginRenderPass);
+    LOAD(CmdEndRenderPass);
+    LOAD(CmdClearAttachments);
+    LOAD(QueueWaitIdle);
 #undef LOAD
 }
 
@@ -164,7 +175,30 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physicalDevice,
 
     DeviceData data;
     data.overlay_disabled = overlay_disabled();
+    data.device = *pDevice;
     load_device_dispatch(data.disp, *pDevice, next_gdpa);
+
+    // Pick a graphics-capable queue family the app actually created a queue on, so
+    // the overlay command pool/buffers (and the present submit) run on a family that
+    // supports graphics (vkCmdBeginRenderPass / clear-attachments need GRAPHICS).
+    // The physical device shares the instance's loader dispatch key, so we can reach
+    // the instance dispatch table through it.
+    if (InstanceData* idata = instance_data(physicalDevice)) {
+        if (idata->disp.GetPhysicalDeviceQueueFamilyProperties) {
+            uint32_t qfc = 0;
+            idata->disp.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &qfc, nullptr);
+            std::vector<VkQueueFamilyProperties> qfs(qfc);
+            idata->disp.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &qfc, qfs.data());
+            for (uint32_t i = 0; i < pCreateInfo->queueCreateInfoCount; ++i) {
+                uint32_t fam = pCreateInfo->pQueueCreateInfos[i].queueFamilyIndex;
+                if (fam < qfc && (qfs[fam].queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+                    data.graphics_queue_family = fam;
+                    data.has_graphics_queue_family = true;
+                    break;
+                }
+            }
+        }
+    }
 
     {
         std::lock_guard<std::mutex> g(g_lock);

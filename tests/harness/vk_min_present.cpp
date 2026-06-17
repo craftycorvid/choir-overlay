@@ -73,12 +73,14 @@ int main(int argc, char** argv) {
     int frames = 1;
     const char* readback = nullptr;
     bool layer_info = false;
+    bool recreate = false;  // recreate the swapchain once via oldSwapchain before presenting
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) frames = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--readback") == 0 && i + 1 < argc) readback = argv[++i];
         else if (std::strcmp(argv[i], "--layer-info") == 0) layer_info = true;
+        else if (std::strcmp(argv[i], "--recreate") == 0) recreate = true;
         else if (std::strcmp(argv[i], "--help") == 0) {
-            std::puts("vk_min_present [--frames N] [--readback OUT.ppm] [--layer-info]");
+            std::puts("vk_min_present [--frames N] [--readback OUT.ppm] [--layer-info] [--recreate]");
             return 0;
         }
     }
@@ -204,6 +206,19 @@ int main(int argc, char** argv) {
     swci.clipped = VK_TRUE;
     VkSwapchainKHR swapchain;
     VK_CHECK(vkCreateSwapchainKHR(device, &swci, nullptr, &swapchain));
+
+    // Exercise the recreate path: build a new swapchain passing the current one as
+    // oldSwapchain, then retire the old. This drives the layer's oldSwapchain
+    // teardown + rebuild before any present happens.
+    if (recreate) {
+        VkSwapchainKHR old = swapchain;
+        swci.oldSwapchain = old;
+        VkSwapchainKHR fresh;
+        VK_CHECK(vkCreateSwapchainKHR(device, &swci, nullptr, &fresh));
+        vkDestroySwapchainKHR(device, old, nullptr);
+        swapchain = fresh;
+        swci.oldSwapchain = VK_NULL_HANDLE;
+    }
 
     uint32_t sic = 0;
     vkGetSwapchainImagesKHR(device, swapchain, &sic, nullptr);

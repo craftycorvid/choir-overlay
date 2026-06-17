@@ -166,3 +166,17 @@ test('layer_loads',
     'VK_LOADER_LAYERS_ENABLE': 'VK_LAYER_choir_overlay_x86_64',
   },
 )
+
+# Task 14: golden draw-path test. Runs vk_min_present with the layer forced on (the
+# test driver sets the loader env vars + spawns vk_min_present), reads the PPM
+# readback, and asserts the overlay rectangle is red inside / blue (app clear)
+# outside. vk_min_present's exit 77 (no headless surface) is propagated as a SKIP.
+test_layer_golden = executable('test_layer_golden',
+  'harness/test_layer_golden.cpp',
+  cpp_args: ['-Wno-missing-field-initializers'],
+)
+test('layer_golden',
+  test_layer_golden,
+  args: [vk_min_present.full_path(), layer_dir, meson.current_build_dir() / 'layer_golden.ppm'],
+  depends: [libchoir_overlay, vk_min_present],
+)

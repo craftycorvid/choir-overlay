@@ -64,6 +64,18 @@ struct DeviceDispatch {
     PFN_vkDestroyFence DestroyFence = nullptr;
     PFN_vkWaitForFences WaitForFences = nullptr;
     PFN_vkResetFences ResetFences = nullptr;
+    // Render-pass / framebuffer / image-view + draw recording for the present-time
+    // overlay pass (Task 14+).
+    PFN_vkCreateImageView CreateImageView = nullptr;
+    PFN_vkDestroyImageView DestroyImageView = nullptr;
+    PFN_vkCreateRenderPass CreateRenderPass = nullptr;
+    PFN_vkDestroyRenderPass DestroyRenderPass = nullptr;
+    PFN_vkCreateFramebuffer CreateFramebuffer = nullptr;
+    PFN_vkDestroyFramebuffer DestroyFramebuffer = nullptr;
+    PFN_vkCmdBeginRenderPass CmdBeginRenderPass = nullptr;
+    PFN_vkCmdEndRenderPass CmdEndRenderPass = nullptr;
+    PFN_vkCmdClearAttachments CmdClearAttachments = nullptr;
+    PFN_vkQueueWaitIdle QueueWaitIdle = nullptr;
 };
 
 // Per-instance bookkeeping. `overlay_disabled` latches the gating decision so
@@ -78,6 +90,13 @@ struct InstanceData {
 struct DeviceData {
     DeviceDispatch disp;
     bool overlay_disabled = false;
+    // The VkDevice handle itself (needed by the present hook, which only receives a
+    // VkQueue) and a graphics-capable queue family on it (for the overlay command
+    // pool). Captured at vkCreateDevice from the device's queue-create infos +
+    // physical-device queue-family properties.
+    VkDevice device = VK_NULL_HANDLE;
+    uint32_t graphics_queue_family = 0;
+    bool has_graphics_queue_family = false;
 };
 
 // --- Hooked entrypoints (definitions in dispatch.cpp) ---
