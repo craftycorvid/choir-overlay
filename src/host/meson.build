@@ -11,6 +11,7 @@ host_inc = include_directories('.')
 host_core_sources = files(
   'discord/ipc_transport.cpp',
   'discord/rpc_messages.cpp',
+  'discord/oauth.cpp',
 )
 
 libchoir_host_core = static_library('choir_host_core',
