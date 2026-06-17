@@ -200,3 +200,20 @@ test('layer_state',
   args: [vk_min_present.full_path(), fake_host.full_path(), layer_dir],
   depends: [libchoir_overlay, vk_min_present, fake_host],
 )
+
+# Task 18: fault-injection / failure-isolation test. The driver runs vk_min_present with
+# the layer forced on under injected faults (corrupt avatars, malformed snapshot frame,
+# host disconnect mid-stream, in_voice flapping for 300 frames) and asserts the app
+# ALWAYS exits 0 within a per-case timeout (a hang is a FAIL, killed by a watchdog). It
+# also proves lazy-init: a no-voice run does ZERO overlay allocation (the
+# CHOIR_DEBUG_LAZY_INIT signal is never logged). vk_min_present's exit 77 (no headless
+# surface) is propagated as a SKIP. The 300-frame case bumps the meson timeout.
+test('layer_faults',
+  executable('test_layer_faults',
+    'harness/test_layer_faults.cpp',
+    dependencies: [dependency('threads')],
+  ),
+  args: [vk_min_present.full_path(), fake_host.full_path(), layer_dir],
+  depends: [libchoir_overlay, vk_min_present, fake_host],
+  timeout: 240,
+)

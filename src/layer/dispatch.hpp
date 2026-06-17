@@ -21,6 +21,8 @@
 
 #include <vulkan/vulkan.h>
 
+#include <atomic>
+
 namespace choir {
 
 // Instance-level functions we forward / will need. Loaded via the next layer's
@@ -118,9 +120,23 @@ struct InstanceData {
 
 // Per-device bookkeeping. Holds the owning instance's loader key so the device
 // can reach its instance data if needed.
+//
+// NOT copyable (it owns a std::atomic latch). It is constructed in place inside the
+// dispatch map (see CreateDevice), never copy-assigned.
 struct DeviceData {
+    DeviceData() = default;
+    DeviceData(const DeviceData&) = delete;
+    DeviceData& operator=(const DeviceData&) = delete;
+
     DeviceDispatch disp;
     bool overlay_disabled = false;
+    // Failure-isolation latch (Task 18). Tripped the first time ANY overlay operation
+    // throws or returns a fatal VkResult for this device. Once set, the present hook
+    // does ZERO overlay work and just forwards the real vkQueuePresentKHR, so a single
+    // internal failure degrades to "no overlay, game runs normally" — never a crash,
+    // hang, or validation storm. Atomic so the present hook reads it without the
+    // swapchain lock. Latches for the device lifetime (we never auto-recover).
+    std::atomic<bool> overlay_failed{false};
     // The VkDevice handle itself (needed by the present hook, which only receives a
     // VkQueue) and a graphics-capable queue family on it (for the overlay command
     // pool). Captured at vkCreateDevice from the device's queue-create infos +
@@ -161,5 +177,11 @@ VKAPI_ATTR void VKAPI_CALL DestroyDevice(VkDevice device,
 // --- Per-handle data lookup (used by future hooks; keyed by loader dispatch key) ---
 InstanceData* instance_data(void* dispatchable_handle);
 DeviceData* device_data(void* dispatchable_handle);
+
+// Trip the per-device overlay-off latch (Task 18) and log the reason ONCE to stderr
+// (the very first trip for this device). After this the present hook forwards the
+// real present unchanged for the device. `dd` may be null (no-op). `reason` is a short
+// static string. Safe to call from the present hook (no lock held).
+void mark_overlay_failed(DeviceData* dd, const char* reason);
 
 }  // namespace choir

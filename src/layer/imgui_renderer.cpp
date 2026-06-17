@@ -175,9 +175,18 @@ void ImguiRenderer::begin_frame(VkExtent2D extent, const Snapshot* snap,
     // renderer-side new-frame (no GPU commands; it handles texture bookkeeping).
     ImGui_ImplVulkan_NewFrame();
 
+    // Clamp DisplaySize to sane, strictly-positive values (Task 18). ImGui asserts /
+    // misbehaves on a zero, negative, NaN, or absurdly large display size; a layer is
+    // fed whatever extent the app's swapchain reports, which on a minimized/0x0 surface
+    // or a buggy ICD can be 0 or garbage. Never pass ImGui a bad size — degrade to a
+    // 1px frame (which draws nothing visible) rather than trip an assert/abort.
+    auto sane = [](uint32_t v) -> float {
+        if (v == 0) return 1.0f;                 // 0x0 surface -> minimal valid frame
+        if (v > 16384u) return 16384.0f;         // cap to a sane max (Vulkan maxFramebuffer)
+        return static_cast<float>(v);
+    };
     ImGuiIO& io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(static_cast<float>(extent.width),
-                            static_cast<float>(extent.height));
+    io.DisplaySize = ImVec2(sane(extent.width), sane(extent.height));
     // Some ImGui paths (e.g. timing) read DeltaTime; supply a sane fixed value since
     // we have no real per-frame clock wired here. Must be > 0.
     io.DeltaTime = 1.0f / 60.0f;

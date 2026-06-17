@@ -2,6 +2,8 @@
 
 #include <vulkan/vk_layer.h>
 
+#include <atomic>
+#include <cstdio>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -126,9 +128,21 @@ DeviceData* device_data(void* dispatchable_handle) {
     return it == g_devices.end() ? nullptr : &it->second;
 }
 
+void mark_overlay_failed(DeviceData* dd, const char* reason) {
+    if (!dd) return;
+    // exchange returns the PRIOR value: log only on the first 0->1 transition so a
+    // failing game does not spew a line every present.
+    if (!dd->overlay_failed.exchange(true, std::memory_order_release)) {
+        std::fprintf(stderr,
+                     "[choir] overlay disabled for this device (failure isolation): %s\n",
+                     reason ? reason : "unknown");
+        std::fflush(stderr);
+    }
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
                                               const VkAllocationCallbacks* pAllocator,
-                                              VkInstance* pInstance) {
+                                              VkInstance* pInstance) try {
     VkLayerInstanceCreateInfo* link = find_instance_link(pCreateInfo);
     if (!link || !link->u.pLayerInfo) return VK_ERROR_INITIALIZATION_FAILED;
 
@@ -159,13 +173,21 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo* pCreat
         g_instances[dispatch_key(*pInstance)] = data;
     }
     return VK_SUCCESS;
+} catch (...) {
+    // A C++ exception must NEVER unwind through the C loader/app (UB). If our
+    // bookkeeping threw AFTER the instance was created the app already has a valid
+    // handle, so report success; otherwise report failure. We cannot have created the
+    // instance and lost *pInstance here because the only throwing work is after the
+    // down-chain create populated it, so SUCCESS is the safe answer when set.
+    return (pInstance && *pInstance != VK_NULL_HANDLE) ? VK_SUCCESS
+                                                       : VK_ERROR_INITIALIZATION_FAILED;
 }
 
 VKAPI_ATTR void VKAPI_CALL DestroyInstance(VkInstance instance,
                                            const VkAllocationCallbacks* pAllocator) {
     if (!instance) return;
     PFN_vkDestroyInstance down = nullptr;
-    {
+    try {
         std::lock_guard<std::mutex> g(g_lock);
         void* key = dispatch_key(instance);
         auto it = g_instances.find(key);
@@ -173,6 +195,8 @@ VKAPI_ATTR void VKAPI_CALL DestroyInstance(VkInstance instance,
             down = it->second.disp.DestroyInstance;
             g_instances.erase(it);
         }
+    } catch (...) {
+        // Map erase shouldn't throw, but never let an exception escape: still destroy.
     }
     if (down) down(instance, pAllocator);
 }
@@ -180,7 +204,7 @@ VKAPI_ATTR void VKAPI_CALL DestroyInstance(VkInstance instance,
 VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physicalDevice,
                                             const VkDeviceCreateInfo* pCreateInfo,
                                             const VkAllocationCallbacks* pAllocator,
-                                            VkDevice* pDevice) {
+                                            VkDevice* pDevice) try {
     VkLayerDeviceCreateInfo* link = find_device_link(pCreateInfo);
     if (!link || !link->u.pLayerInfo) return VK_ERROR_INITIALIZATION_FAILED;
 
@@ -198,7 +222,10 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physicalDevice,
     VkResult res = next_create(physicalDevice, pCreateInfo, pAllocator, pDevice);
     if (res != VK_SUCCESS) return res;
 
-    DeviceData data;
+    // DeviceData owns a std::atomic latch (not copyable), so emplace it directly in the
+    // map and populate it in place under the lock.
+    std::lock_guard<std::mutex> g(g_lock);
+    DeviceData& data = g_devices[dispatch_key(*pDevice)];
     data.overlay_disabled = overlay_disabled();
     data.device = *pDevice;
     load_device_dispatch(data.disp, *pDevice, next_gdpa);
@@ -207,18 +234,22 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physicalDevice,
     // the overlay command pool/buffers (and the present submit) run on a family that
     // supports graphics (vkCmdBeginRenderPass / clear-attachments need GRAPHICS).
     // The physical device shares the instance's loader dispatch key, so we can reach
-    // the instance dispatch table through it.
+    // the instance dispatch table through it. (instance_data takes g_lock itself, but
+    // it is the SAME std::mutex held here — std::mutex is non-reentrant — so read the
+    // instance entry directly from g_instances instead of calling instance_data.)
     data.physical_device = physicalDevice;
-    if (InstanceData* idata = instance_data(physicalDevice)) {
-        data.instance = idata->instance;
-        data.api_version = idata->api_version;
-        data.instance_gipa = idata->disp.GetInstanceProcAddr;
-        data.get_phys_mem_props = idata->disp.GetPhysicalDeviceMemoryProperties;
-        if (idata->disp.GetPhysicalDeviceQueueFamilyProperties) {
+    auto iit = g_instances.find(dispatch_key(physicalDevice));
+    if (iit != g_instances.end()) {
+        InstanceData& idata = iit->second;
+        data.instance = idata.instance;
+        data.api_version = idata.api_version;
+        data.instance_gipa = idata.disp.GetInstanceProcAddr;
+        data.get_phys_mem_props = idata.disp.GetPhysicalDeviceMemoryProperties;
+        if (idata.disp.GetPhysicalDeviceQueueFamilyProperties) {
             uint32_t qfc = 0;
-            idata->disp.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &qfc, nullptr);
+            idata.disp.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &qfc, nullptr);
             std::vector<VkQueueFamilyProperties> qfs(qfc);
-            idata->disp.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &qfc, qfs.data());
+            idata.disp.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &qfc, qfs.data());
             for (uint32_t i = 0; i < pCreateInfo->queueCreateInfoCount; ++i) {
                 uint32_t fam = pCreateInfo->pQueueCreateInfos[i].queueFamilyIndex;
                 if (fam < qfc && (qfs[fam].queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
@@ -237,18 +268,21 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physicalDevice,
         data.disp.GetDeviceQueue(*pDevice, data.graphics_queue_family, 0, &data.graphics_queue);
     }
 
-    {
-        std::lock_guard<std::mutex> g(g_lock);
-        g_devices[dispatch_key(*pDevice)] = data;
-    }
     return VK_SUCCESS;
+} catch (...) {
+    // Never let an exception unwind into the C loader/app. The device handle, if
+    // created down-chain, is valid even if our bookkeeping threw — report SUCCESS so
+    // the app keeps the working device (the overlay simply won't track it; the present
+    // hook falls back to forwarding because device_data() finds no entry).
+    return (pDevice && *pDevice != VK_NULL_HANDLE) ? VK_SUCCESS
+                                                   : VK_ERROR_INITIALIZATION_FAILED;
 }
 
 VKAPI_ATTR void VKAPI_CALL DestroyDevice(VkDevice device,
                                          const VkAllocationCallbacks* pAllocator) {
     if (!device) return;
     PFN_vkDestroyDevice down = nullptr;
-    {
+    try {
         std::lock_guard<std::mutex> g(g_lock);
         void* key = dispatch_key(device);
         auto it = g_devices.find(key);
@@ -256,6 +290,8 @@ VKAPI_ATTR void VKAPI_CALL DestroyDevice(VkDevice device,
             down = it->second.disp.DestroyDevice;
             g_devices.erase(it);
         }
+    } catch (...) {
+        // Never let an exception escape: still destroy the device down-chain.
     }
     if (down) down(device, pAllocator);
 }

@@ -282,10 +282,22 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
     StateClient& client = StateClient::instance();
     const bool host_disabled = client.disabled();
 
-    // Lazily initialize the ImGui renderer on the first present of this swapchain (we
-    // have the render pass + image count now). Try once; if it fails we leave it null
-    // and the render pass records an empty (LOAD-only) overlay — never crash the game.
-    if (!s.imgui_tried) {
+    // Read the latest published snapshot (lock-free). Null until the host sends one (or
+    // when host-disabled). The overlay is invisible until we are actually in a voice
+    // channel (snap && snap->in_voice).
+    std::shared_ptr<const Snapshot> snapshot =
+        host_disabled ? nullptr : client.latest();
+    const bool in_voice = snapshot && snapshot->in_voice;
+
+    // --- LAZY OVERLAY INIT (Task 18) ---------------------------------------------
+    // Do NO overlay Vulkan/ImGui allocation (ImguiRenderer init, descriptor pool,
+    // AvatarTextures) until the FIRST snapshot with in_voice == true arrives and the
+    // process is not disabled. A denylisted/Disabled process, or a process that is
+    // simply never in voice, therefore does ZERO overlay allocation — only the cheap
+    // dispatch passthrough + the state-client socket attempt. Once allocated we KEEP
+    // the renderer for the swapchain's lifetime; later in_voice toggles just gate
+    // drawing (no per-toggle teardown/realloc thrash).
+    if (in_voice && !host_disabled && !s.imgui_tried) {
         s.imgui_tried = true;
         s.imgui = std::make_unique<ImguiRenderer>();
         if (!s.imgui->init(s.dd->instance, s.dd->physical_device, s.device,
@@ -293,6 +305,11 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
                            s.render_pass, static_cast<uint32_t>(s.images.size()),
                            s.dd->api_version, s.dd->instance_gipa, d)) {
             s.imgui.reset();  // not ready — overlay draws nothing this swapchain
+        }
+        if (const char* dbg = ::getenv("CHOIR_DEBUG_LAZY_INIT"); dbg && *dbg) {
+            std::fprintf(stderr, "[choir] overlay lazy-init on first in_voice: imgui=%s\n",
+                         (s.imgui && s.imgui->ready()) ? "ready" : "failed");
+            std::fflush(stderr);
         }
     }
 
@@ -305,47 +322,60 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
         s.avatars->init(s.imgui.get());
     }
 
-    // Eagerly drain any pending avatar-load requests and upload them on THIS (render)
-    // thread — the only thread that may call Vulkan. This is a best-effort warm-up; the
-    // robust resolution happens in draw_overlay, which resolves each participant's
-    // texture by hash from the StateClient's RETAINED avatar map (so a recreated/second
-    // swapchain — with a fresh AvatarTextures but no replayed AvatarReady — still shows
-    // avatars). Cached by hash, so repeats are cheap. Skip when host-disabled.
-    if (renderer_ready && s.avatars && !host_disabled) {
-        for (const AvatarReq& req : client.drain_avatar_requests())
-            s.avatars->get_or_load(req);
-        if (const char* dbg = ::getenv("CHOIR_DEBUG_AVATARS"); dbg && *dbg)
-            std::fprintf(stderr, "[choir] avatar textures loaded: %zu\n", s.avatars->size());
-    }
-
-    // Read the latest published snapshot (lock-free). Null until the host sends one (or
-    // when host-disabled); draw_overlay also gates on snap->in_voice, so the overlay is
-    // invisible until we are actually in a voice channel.
-    std::shared_ptr<const Snapshot> snapshot =
-        host_disabled ? nullptr : client.latest();
-
-    // Wall-clock ms for toast expiry: the host stamps Notification.created_ms with
-    // std::chrono::system_clock ms, so read the same clock domain here.
-    const int64_t now_ms =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch())
-            .count();
-
     // Build the ImGui draw list for this frame BEFORE recording the render pass
     // (ImGui::NewFrame/Render record no GPU commands). With no renderer, or when the
     // host disabled this process, this is a no-op and the render pass below just LOADs
     // the app's frame unchanged. draw_overlay itself draws nothing when the snapshot is
     // null or !in_voice.
-    const bool draw_imgui = renderer_ready && !host_disabled && s.avatars;
-    if (draw_imgui)
-        s.imgui->begin_frame(s.extent, snapshot.get(), *s.avatars, client, now_ms);
+    //
+    // FAILURE ISOLATION (Task 18): the entire overlay block — avatar uploads (Vulkan),
+    // begin_frame (ImGui NewFrame + our draw_overlay), end_frame (ImGui draw-data
+    // record) — is wrapped in try/catch. ImGui can assert/abort/throw on misuse and the
+    // avatar upload can throw (bad_alloc, etc.). On ANY exception we trip the per-device
+    // overlay-off latch and return nullptr; the present hook then forwards the REAL
+    // present so the frame still displays. We must not let a C++ exception unwind into
+    // the C app, and we must not re-touch ImGui after a throw (its frame state may be
+    // inconsistent) — the latch guarantees that.
+    bool draw_imgui = renderer_ready && !host_disabled && s.avatars;
+    try {
+        // Eagerly drain any pending avatar-load requests and upload them on THIS
+        // (render) thread — the only thread that may call Vulkan. Best-effort warm-up;
+        // draw_overlay resolves each participant's texture by hash on demand. Cached by
+        // hash, so repeats are cheap. Skip when host-disabled.
+        if (renderer_ready && s.avatars && !host_disabled) {
+            for (const AvatarReq& req : client.drain_avatar_requests())
+                s.avatars->get_or_load(req);
+            if (const char* dbg = ::getenv("CHOIR_DEBUG_AVATARS"); dbg && *dbg)
+                std::fprintf(stderr, "[choir] avatar textures loaded: %zu\n",
+                             s.avatars->size());
+        }
+
+        // Wall-clock ms for toast expiry: the host stamps Notification.created_ms with
+        // std::chrono::system_clock ms, so read the same clock domain here.
+        const int64_t now_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch())
+                .count();
+
+        if (draw_imgui)
+            s.imgui->begin_frame(s.extent, snapshot.get(), *s.avatars, client, now_ms);
+    } catch (...) {
+        // Tear down any started ImGui frame defensively, then latch overlay off.
+        if (draw_imgui && s.imgui) {
+            try { s.imgui->end_frame(VK_NULL_HANDLE); } catch (...) {}
+        }
+        mark_overlay_failed(s.dd, "exception during overlay frame build");
+        return nullptr;
+    }
 
     // Begin the render pass on this image's framebuffer (full extent), record the
     // ImGui draw data inside it, end.
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     if (d.BeginCommandBuffer(img.cmd, &bi) != VK_SUCCESS) {
-        if (draw_imgui) s.imgui->end_frame(VK_NULL_HANDLE);  // discard the started frame
+        if (draw_imgui) {
+            try { s.imgui->end_frame(VK_NULL_HANDLE); } catch (...) {}  // discard frame
+        }
         return nullptr;
     }
 
@@ -358,8 +388,19 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
     d.CmdBeginRenderPass(img.cmd, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
 
     // Record the ImGui draw data into the command buffer, inside the active render
-    // pass (replaces the Task-14 clear-rect placeholder).
-    if (draw_imgui) s.imgui->end_frame(img.cmd);
+    // pass (replaces the Task-14 clear-rect placeholder). Wrapped: a throw here would
+    // leave a half-recorded command buffer — we still close the render pass + buffer
+    // and trip the latch so we never submit a malformed buffer twice.
+    if (draw_imgui) {
+        try {
+            s.imgui->end_frame(img.cmd);
+        } catch (...) {
+            d.CmdEndRenderPass(img.cmd);
+            d.EndCommandBuffer(img.cmd);
+            mark_overlay_failed(s.dd, "exception recording ImGui draw data");
+            return nullptr;
+        }
+    }
 
     d.CmdEndRenderPass(img.cmd);
     if (d.EndCommandBuffer(img.cmd) != VK_SUCCESS) return nullptr;
@@ -375,72 +416,87 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device,
     DeviceData* dd = device_data(device);
     if (!dd || !dd->disp.CreateSwapchainKHR) return VK_ERROR_INITIALIZATION_FAILED;
 
-    // If recreating from an old swapchain, tear our state for it down first: the app
-    // is retiring it, and the new swapchain may reuse the queue/images. We must idle
-    // (or wait fences) before destroying objects that may be in flight; do that with
-    // the old state's fences captured here, before the down-chain create.
     VkSwapchainKHR old = pCreateInfo ? pCreateInfo->oldSwapchain : VK_NULL_HANDLE;
 
+    // Create the REAL swapchain first and unconditionally — this is the app's, and it
+    // must succeed regardless of any overlay bookkeeping. Returned before any overlay
+    // work that could throw.
     VkResult res = dd->disp.CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
     if (res != VK_SUCCESS) return res;
 
-    if (old != VK_NULL_HANDLE) {
-        SwapchainState retired;
-        bool have = false;
-        {
-            std::lock_guard<std::mutex> g(g_sc_lock);
-            auto it = g_swapchains.find(old);
-            if (it != g_swapchains.end()) {
-                retired = std::move(it->second);
-                g_swapchains.erase(it);
-                have = true;
+    // ENTRYPOINT CATCH-ALL (Task 18): everything below is overlay bookkeeping. If it
+    // throws, swallow it — the app already has a valid swapchain (res == VK_SUCCESS).
+    // Trip the latch so the present hook stays out of the overlay path for this device.
+    try {
+        // If recreating from an old swapchain, tear our state for it down: the app is
+        // retiring it and the new swapchain may reuse the queue/images. Idle (or wait
+        // fences) before destroying objects that may be in flight.
+        if (old != VK_NULL_HANDLE) {
+            SwapchainState retired;
+            bool have = false;
+            {
+                std::lock_guard<std::mutex> g(g_sc_lock);
+                auto it = g_swapchains.find(old);
+                if (it != g_swapchains.end()) {
+                    retired = std::move(it->second);
+                    g_swapchains.erase(it);
+                    have = true;
+                }
+            }
+            if (have) {
+                if (dd->disp.DeviceWaitIdle) dd->disp.DeviceWaitIdle(device);
+                destroy_state(retired);
             }
         }
-        if (have) {
-            // Idle the device so no overlay command buffer for the old swapchain is
-            // still executing, then free its objects.
-            if (dd->disp.DeviceWaitIdle) dd->disp.DeviceWaitIdle(device);
-            destroy_state(retired);
+
+        if (dd->overlay_disabled) return res;  // tracked nothing; present forwards
+
+        SwapchainState s;
+        s.device = device;
+        s.dd = dd;
+        s.format = pCreateInfo->imageFormat;
+        s.extent = pCreateInfo->imageExtent;
+        // build_state may fail (leaves s.ok == false); we still store it so present can
+        // see "tracked but not drawable" and fall back, and so destroy cleans up.
+        build_state(s, *pSwapchain);
+        {
+            std::lock_guard<std::mutex> g(g_sc_lock);
+            g_swapchains[*pSwapchain] = std::move(s);
         }
+    } catch (...) {
+        mark_overlay_failed(dd, "exception in CreateSwapchainKHR bookkeeping");
     }
-
-    if (dd->overlay_disabled) return res;  // tracked nothing; present forwards unchanged
-
-    SwapchainState s;
-    s.device = device;
-    s.dd = dd;
-    s.format = pCreateInfo->imageFormat;
-    s.extent = pCreateInfo->imageExtent;
-    // build_state may fail (leaves s.ok == false); we still store it so present can
-    // see "tracked but not drawable" and fall back, and so destroy cleans up.
-    build_state(s, *pSwapchain);
-    {
-        std::lock_guard<std::mutex> g(g_sc_lock);
-        g_swapchains[*pSwapchain] = std::move(s);
-    }
-    return res;
+    return res;  // the app's swapchain is valid either way
 }
 
 VKAPI_ATTR void VKAPI_CALL DestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain,
                                                const VkAllocationCallbacks* pAllocator) {
     DeviceData* dd = device_data(device);
 
-    SwapchainState s;
-    bool have = false;
-    {
-        std::lock_guard<std::mutex> g(g_sc_lock);
-        auto it = g_swapchains.find(swapchain);
-        if (it != g_swapchains.end()) {
-            s = std::move(it->second);
-            g_swapchains.erase(it);
-            have = true;
+    // ENTRYPOINT CATCH-ALL (Task 18): free our overlay objects, but NEVER let an
+    // exception stop us from destroying the app's swapchain down-chain (a leaked app
+    // swapchain would break the game). Any throw here is swallowed; the real destroy
+    // still runs below.
+    try {
+        SwapchainState s;
+        bool have = false;
+        {
+            std::lock_guard<std::mutex> g(g_sc_lock);
+            auto it = g_swapchains.find(swapchain);
+            if (it != g_swapchains.end()) {
+                s = std::move(it->second);
+                g_swapchains.erase(it);
+                have = true;
+            }
         }
-    }
-    if (have) {
-        // Idle so no overlay command buffer for this swapchain is in flight, then
-        // free our objects BEFORE the app's swapchain (and its images/views we view).
-        if (dd && dd->disp.DeviceWaitIdle) dd->disp.DeviceWaitIdle(device);
-        destroy_state(s);
+        if (have) {
+            // Idle so no overlay command buffer for this swapchain is in flight, then
+            // free our objects BEFORE the app's swapchain (and its images/views we view).
+            if (dd && dd->disp.DeviceWaitIdle) dd->disp.DeviceWaitIdle(device);
+            destroy_state(s);
+        }
+    } catch (...) {
+        mark_overlay_failed(dd, "exception in DestroySwapchainKHR bookkeeping");
     }
 
     if (dd && dd->disp.DestroySwapchainKHR)
@@ -458,17 +514,26 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue,
         return VK_ERROR_INITIALIZATION_FAILED;
     };
 
+    // Failure-isolation latch (Task 18): once tripped for this device, do ZERO overlay
+    // work forever — just forward the real present. Checked first (atomic, lock-free)
+    // so a degraded device pays nothing but the real call. Also honor the static gates.
     if (!dd || !dd->disp.QueuePresentKHR || dd->overlay_disabled || overlay_disabled() ||
+        dd->overlay_failed.load(std::memory_order_acquire) ||
         !pPresentInfo || pPresentInfo->swapchainCount == 0) {
         return forward();
     }
 
-    const uint32_t n = pPresentInfo->swapchainCount;
-    const VkSemaphore* app_waits = pPresentInfo->pWaitSemaphores;
-    const uint32_t app_wait_count = pPresentInfo->waitSemaphoreCount;
-    const DeviceDispatch& d = dd->disp;
+    // ENTRYPOINT CATCH-ALL (Task 18): a C++ exception unwinding through the C app/loader
+    // is UB. Wrap the entire overlay block (record + submit) so any exception that
+    // escapes record_one's inner guards (or std::vector/lock_guard allocation) trips the
+    // latch and forwards the real present — the frame still displays, the game lives on.
+    try {
+        const uint32_t n = pPresentInfo->swapchainCount;
+        const VkSemaphore* app_waits = pPresentInfo->pWaitSemaphores;
+        const uint32_t app_wait_count = pPresentInfo->waitSemaphoreCount;
+        const DeviceDispatch& d = dd->disp;
 
-    std::lock_guard<std::mutex> g(g_sc_lock);
+        std::lock_guard<std::mutex> g(g_sc_lock);
 
     // Phase 1: record the overlay render pass into every tracked swapchain's current
     // image. No submit yet, so the app's wait semaphores are still untouched — if any
@@ -524,8 +589,13 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue,
         // reset-but-unsignaled fence.
         img->fence_in_flight = false;
         if (d.ResetFences(dd->device, 1, &img->fence) != VK_SUCCESS) {
-            if (i == 0) return forward();  // nothing submitted yet — clean fallback
-            break;                         // present what already submitted; no deadlock
+            if (i == 0) {
+                // Nothing submitted yet — clean fallback. A fence reset failing is a
+                // sign the overlay path is unhealthy; latch it off so we stop trying.
+                mark_overlay_failed(dd, "vkResetFences failed");
+                return forward();
+            }
+            break;  // present what already submitted; no deadlock
         }
         if (d.QueueSubmit(queue, 1, &si, img->fence) != VK_SUCCESS) {
             // Submit failed: the fence was reset but is NOT in flight (left false
@@ -533,11 +603,13 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue,
             // no deadlock.
             if (i == 0) {
                 // Nothing submitted yet (app semaphores not consumed) — clean fallback.
+                mark_overlay_failed(dd, "vkQueueSubmit failed");
                 return forward();
             }
             // A later submit failed after the app semaphores were consumed: we cannot
             // forward with the original wait list. Present with what we have so far so
-            // the frame still displays and we never deadlock.
+            // the frame still displays and we never deadlock. Latch off for next time.
+            mark_overlay_failed(dd, "vkQueueSubmit failed mid-batch");
             break;
         }
         // Submit succeeded: the fence is now genuinely in flight and will signal.
@@ -546,10 +618,20 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue,
         prev_done = img->overlay_done;
     }
 
-    VkPresentInfoKHR pi = *pPresentInfo;
-    pi.waitSemaphoreCount = static_cast<uint32_t>(overlay_sems.size());
-    pi.pWaitSemaphores = overlay_sems.empty() ? nullptr : overlay_sems.data();
-    return dd->disp.QueuePresentKHR(queue, &pi);
+        VkPresentInfoKHR pi = *pPresentInfo;
+        pi.waitSemaphoreCount = static_cast<uint32_t>(overlay_sems.size());
+        pi.pWaitSemaphores = overlay_sems.empty() ? nullptr : overlay_sems.data();
+        return dd->disp.QueuePresentKHR(queue, &pi);
+    } catch (...) {
+        // An exception escaped the overlay block (e.g. std::bad_alloc growing a vector,
+        // or a throw from deep in ImGui/avatar upload that record_one didn't catch).
+        // Latch overlay off for this device and forward the real present so the frame
+        // still displays. The lock_guard above has already released by the time we get
+        // here (its scope ended with the throw), so forward() takes no lock — no
+        // deadlock. NEVER rethrow: a C++ exception in a C caller is UB.
+        mark_overlay_failed(dd, "exception in QueuePresentKHR overlay block");
+        return forward();
+    }
 }
 
 }  // namespace choir

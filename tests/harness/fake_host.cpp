@@ -10,6 +10,16 @@
 // avatar cache dir. Qt-free (plain POSIX + libchoir_ipc + nlohmann json).
 //
 // Usage: fake_host [--socket PATH] [--cache-dir DIR] [--once]
+//                  [--corrupt-avatars] [--corrupt-snapshot] [--flap N]
+//
+// Fault-injection flags (Task 18):
+//   --corrupt-avatars   write truncated/bad-magic .rgba files at the advertised paths
+//                       so the layer's read_avatar_rgba fails -> placeholder, no crash.
+//   --corrupt-snapshot  send a Snapshot frame whose payload is invalid JSON (the layer
+//                       must drop it: never publish, keep presenting).
+//   --flap N            after the initial snapshot, send N more snapshots alternating
+//                       in_voice true/false (~every 8ms) to exercise show/hide without
+//                       per-toggle overlay teardown/realloc.
 
 #include "ipc/avatar_file.hpp"
 #include "ipc/framing.hpp"
@@ -23,10 +33,15 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <cerrno>
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -43,6 +58,17 @@ constexpr TestAvatar kAvatars[] = {
     {"avatarC", 0x40, 0x40, 0xE0},  // blue
 };
 
+// Runtime config (parsed from argv). The fault-injection knobs default off so the
+// existing golden/state tests keep their well-behaved fake host.
+struct Config {
+    std::string socket_path;
+    std::string cache_dir;
+    bool once = false;
+    bool corrupt_avatars = false;
+    bool corrupt_snapshot = false;
+    int flap = 0;  // 0 = no flapping; N = N alternating in_voice snapshots after the first
+};
+
 bool write_test_avatar(const std::string& dir, const TestAvatar& a) {
     constexpr uint32_t W = 64, H = 64;
     std::vector<uint8_t> rgba(W * H * 4);
@@ -56,11 +82,25 @@ bool write_test_avatar(const std::string& dir, const TestAvatar& a) {
     return choir::write_avatar_rgba(path, W, H, rgba.data());
 }
 
-choir::Snapshot make_snapshot() {
+// Fault injection: write a deliberately-corrupt .rgba at the avatar path so the layer's
+// read_avatar_rgba rejects it (bad magic + far-too-short for the advertised 64x64).
+// The layer must skip the texture (placeholder) and NOT cache the failed load.
+bool write_corrupt_avatar(const std::string& dir, const TestAvatar& a) {
+    const std::string path = (fs::path(dir) / (std::string(a.hash) + ".rgba")).string();
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) return false;
+    // Wrong magic ("XXXX" instead of "CHAV") and only a few bytes — read_avatar_rgba
+    // validates the magic and the width*height*4 size, so this fails cleanly.
+    const char garbage[] = {'X', 'X', 'X', 'X', 0x01, 0x02, 0x03};
+    f.write(garbage, sizeof(garbage));
+    return static_cast<bool>(f);
+}
+
+choir::Snapshot make_snapshot(bool in_voice, uint64_t revision) {
     choir::Snapshot s;
-    s.in_voice = true;
+    s.in_voice = in_voice;
     s.channel_name = "Test Voice";
-    s.revision = 1;
+    s.revision = revision;
 
     choir::Participant p0;
     p0.user_id = "1"; p0.display_name = "Alice"; p0.avatar_hash = "avatarA";
@@ -72,15 +112,26 @@ choir::Snapshot make_snapshot() {
     return s;
 }
 
-bool send_snapshot_and_avatars(int fd, const std::string& cache_dir) {
+bool send_snapshot_and_avatars(int fd, const Config& cfg) {
+    if (cfg.corrupt_snapshot) {
+        // Fault injection: a Snapshot frame whose payload is NOT valid JSON. The layer's
+        // from_json_str must fail -> drop it (never publish) -> keep presenting.
+        const std::string garbage = "{ this is not valid json ]]] \x01\x02";
+        std::printf("fake_host: sending CORRUPT snapshot frame\n");
+        std::fflush(stdout);
+        if (!choir::write_frame(fd, choir::MsgType::Snapshot, garbage)) return false;
+        // Don't bother with avatars; the test only checks the layer survives.
+        return true;
+    }
+
     std::string snap_json;
-    choir::to_json_str(make_snapshot(), snap_json);
+    choir::to_json_str(make_snapshot(/*in_voice=*/true, /*revision=*/1), snap_json);
     if (!choir::write_frame(fd, choir::MsgType::Snapshot, snap_json)) return false;
 
     for (const auto& a : kAvatars) {
         nlohmann::json j;
         j["hash"] = a.hash;
-        j["path"] = (fs::path(cache_dir) / (std::string(a.hash) + ".rgba")).string();
+        j["path"] = (fs::path(cfg.cache_dir) / (std::string(a.hash) + ".rgba")).string();
         j["w"] = 64;
         j["h"] = 64;
         if (!choir::write_frame(fd, choir::MsgType::AvatarReady, j.dump())) return false;
@@ -88,9 +139,23 @@ bool send_snapshot_and_avatars(int fd, const std::string& cache_dir) {
     return true;
 }
 
+// Send `count` snapshots alternating in_voice false/true so the overlay shows/hides
+// repeatedly. Lazy-init is correct iff this allocates the overlay exactly once (on the
+// first in_voice) and never tears down on a subsequent !in_voice.
+bool send_flapping_snapshots(int fd, int count) {
+    for (int i = 0; i < count; ++i) {
+        const bool in_voice = (i % 2 == 1);  // false, true, false, true, ...
+        std::string snap_json;
+        choir::to_json_str(make_snapshot(in_voice, /*revision=*/2 + i), snap_json);
+        if (!choir::write_frame(fd, choir::MsgType::Snapshot, snap_json)) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(8));
+    }
+    return true;
+}
+
 // Serve one connected client until it disconnects. Responds to Hello with the
 // scripted snapshot + avatars, and to Ping with Pong.
-void serve_client(int cfd, const std::string& cache_dir) {
+void serve_client(int cfd, const Config& cfg) {
     choir::FrameReader reader;
     bool seeded = false;
     for (;;) {
@@ -103,7 +168,8 @@ void serve_client(int cfd, const std::string& cache_dir) {
                         seeded = true;
                         std::printf("fake_host: client hello: %s\n", f.payload.c_str());
                         std::fflush(stdout);
-                        if (!send_snapshot_and_avatars(cfd, cache_dir)) return;
+                        if (!send_snapshot_and_avatars(cfd, cfg)) return;
+                        if (cfg.flap > 0 && !send_flapping_snapshots(cfd, cfg.flap)) return;
                     }
                     break;
                 case choir::MsgType::Ping:
@@ -120,58 +186,68 @@ void serve_client(int cfd, const std::string& cache_dir) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::string socket_path = choir::runtime_socket_path();
-    std::string cache_dir = choir::avatar_cache_dir();
-    bool once = false;
+    Config cfg;
+    cfg.socket_path = choir::runtime_socket_path();
+    cfg.cache_dir = choir::avatar_cache_dir();
 
     for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--socket") == 0 && i + 1 < argc) socket_path = argv[++i];
-        else if (std::strcmp(argv[i], "--cache-dir") == 0 && i + 1 < argc) cache_dir = argv[++i];
-        else if (std::strcmp(argv[i], "--once") == 0) once = true;
+        if (std::strcmp(argv[i], "--socket") == 0 && i + 1 < argc) cfg.socket_path = argv[++i];
+        else if (std::strcmp(argv[i], "--cache-dir") == 0 && i + 1 < argc) cfg.cache_dir = argv[++i];
+        else if (std::strcmp(argv[i], "--once") == 0) cfg.once = true;
+        else if (std::strcmp(argv[i], "--corrupt-avatars") == 0) cfg.corrupt_avatars = true;
+        else if (std::strcmp(argv[i], "--corrupt-snapshot") == 0) cfg.corrupt_snapshot = true;
+        else if (std::strcmp(argv[i], "--flap") == 0 && i + 1 < argc) cfg.flap = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--help") == 0) {
-            std::puts("fake_host [--socket PATH] [--cache-dir DIR] [--once]");
+            std::puts("fake_host [--socket PATH] [--cache-dir DIR] [--once] "
+                      "[--corrupt-avatars] [--corrupt-snapshot] [--flap N]");
             return 0;
         }
     }
 
     std::error_code ec;
-    fs::create_directories(cache_dir, ec);
+    fs::create_directories(cfg.cache_dir, ec);
     for (const auto& a : kAvatars) {
-        if (!write_test_avatar(cache_dir, a)) {
+        const bool ok = cfg.corrupt_avatars ? write_corrupt_avatar(cfg.cache_dir, a)
+                                            : write_test_avatar(cfg.cache_dir, a);
+        if (!ok) {
             std::fprintf(stderr, "fake_host: failed to write avatar %s\n", a.hash);
             return 1;
         }
     }
 
-    if (socket_path.size() >= sizeof(sockaddr_un::sun_path)) {
+    if (cfg.socket_path.size() >= sizeof(sockaddr_un::sun_path)) {
         std::fprintf(stderr, "fake_host: socket path too long\n");
         return 1;
     }
-    ::unlink(socket_path.c_str());
+    ::unlink(cfg.socket_path.c_str());
 
     int sfd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (sfd < 0) { std::perror("socket"); return 1; }
 
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
-    std::strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
+    std::strncpy(addr.sun_path, cfg.socket_path.c_str(), sizeof(addr.sun_path) - 1);
     if (::bind(sfd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
         std::perror("bind"); ::close(sfd); return 1;
     }
     if (::listen(sfd, 8) < 0) { std::perror("listen"); ::close(sfd); return 1; }
 
-    std::printf("fake_host: listening on %s (cache %s)\n", socket_path.c_str(), cache_dir.c_str());
+    std::printf("fake_host: listening on %s (cache %s)%s%s%s\n", cfg.socket_path.c_str(),
+                cfg.cache_dir.c_str(),
+                cfg.corrupt_avatars ? " [corrupt-avatars]" : "",
+                cfg.corrupt_snapshot ? " [corrupt-snapshot]" : "",
+                cfg.flap ? " [flap]" : "");
     std::fflush(stdout);
 
     for (;;) {
         int cfd = ::accept(sfd, nullptr, nullptr);
         if (cfd < 0) { if (errno == EINTR) continue; std::perror("accept"); break; }
-        serve_client(cfd, cache_dir);
+        serve_client(cfd, cfg);
         ::close(cfd);
-        if (once) break;
+        if (cfg.once) break;
     }
 
     ::close(sfd);
-    ::unlink(socket_path.c_str());
+    ::unlink(cfg.socket_path.c_str());
     return 0;
 }
