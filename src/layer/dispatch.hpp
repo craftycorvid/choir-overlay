@@ -75,6 +75,10 @@ struct DeviceDispatch {
     PFN_vkCmdBeginRenderPass CmdBeginRenderPass = nullptr;
     PFN_vkCmdEndRenderPass CmdEndRenderPass = nullptr;
     PFN_vkCmdClearAttachments CmdClearAttachments = nullptr;
+    // Descriptor pool for the ImGui Vulkan backend (Task 15). ImGui itself allocates
+    // its font-atlas + AddTexture descriptors from a pool we create and hand it.
+    PFN_vkCreateDescriptorPool CreateDescriptorPool = nullptr;
+    PFN_vkDestroyDescriptorPool DestroyDescriptorPool = nullptr;
 };
 
 // Per-instance bookkeeping. `overlay_disabled` latches the gating decision so
@@ -82,6 +86,13 @@ struct DeviceDispatch {
 struct InstanceData {
     InstanceDispatch disp;
     bool overlay_disabled = false;
+    // The VkInstance handle (so a device, which only sees a VkPhysicalDevice sharing
+    // the instance's loader dispatch key, can recover the instance for ImGui init).
+    VkInstance instance = VK_NULL_HANDLE;
+    // The instance's apiVersion (from VkApplicationInfo, or VK_API_VERSION_1_0 if the
+    // app supplied none). Forwarded to ImGui's backend (Task 15) so it loads the right
+    // function variants; harmless for our render-pass (non-dynamic-rendering) path.
+    uint32_t api_version = VK_API_VERSION_1_0;
 };
 
 // Per-device bookkeeping. Holds the owning instance's loader key so the device
@@ -96,6 +107,17 @@ struct DeviceData {
     VkDevice device = VK_NULL_HANDLE;
     uint32_t graphics_queue_family = 0;
     bool has_graphics_queue_family = false;
+    // Handles the ImGui Vulkan backend needs at init (Task 15), captured at
+    // vkCreateDevice. `graphics_queue` is the queue on `graphics_queue_family`
+    // (fetched via vkGetDeviceQueue); ImGui uploads its font atlas on it.
+    VkInstance instance = VK_NULL_HANDLE;
+    VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+    VkQueue graphics_queue = VK_NULL_HANDLE;
+    uint32_t api_version = VK_API_VERSION_1_0;
+    // The next-down vkGetInstanceProcAddr (the owning instance's). The ImGui Vulkan
+    // backend (Task 15), built VK_NO_PROTOTYPES, resolves instance/physical-device
+    // functions through this so it calls into the layer chain, not the loader.
+    PFN_vkGetInstanceProcAddr instance_gipa = nullptr;
 };
 
 // --- Hooked entrypoints (definitions in dispatch.cpp) ---

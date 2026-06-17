@@ -89,6 +89,8 @@ void load_device_dispatch(DeviceDispatch& d, VkDevice device,
     LOAD(CmdBeginRenderPass);
     LOAD(CmdEndRenderPass);
     LOAD(CmdClearAttachments);
+    LOAD(CreateDescriptorPool);
+    LOAD(DestroyDescriptorPool);
 #undef LOAD
 }
 
@@ -126,6 +128,12 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo* pCreat
 
     InstanceData data;
     data.overlay_disabled = overlay_disabled();
+    // Capture the app's requested apiVersion (default 1.0 if it supplied no
+    // VkApplicationInfo). ImGui's Vulkan backend (Task 15) takes this; it is only
+    // consulted there for dynamic-rendering fn loading, which we never use.
+    if (pCreateInfo->pApplicationInfo && pCreateInfo->pApplicationInfo->apiVersion)
+        data.api_version = pCreateInfo->pApplicationInfo->apiVersion;
+    data.instance = *pInstance;
     load_instance_dispatch(data.disp, *pInstance, next_gipa);
 
     {
@@ -182,7 +190,11 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physicalDevice,
     // supports graphics (vkCmdBeginRenderPass / clear-attachments need GRAPHICS).
     // The physical device shares the instance's loader dispatch key, so we can reach
     // the instance dispatch table through it.
+    data.physical_device = physicalDevice;
     if (InstanceData* idata = instance_data(physicalDevice)) {
+        data.instance = idata->instance;
+        data.api_version = idata->api_version;
+        data.instance_gipa = idata->disp.GetInstanceProcAddr;
         if (idata->disp.GetPhysicalDeviceQueueFamilyProperties) {
             uint32_t qfc = 0;
             idata->disp.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &qfc, nullptr);
@@ -197,6 +209,13 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physicalDevice,
                 }
             }
         }
+    }
+
+    // Fetch the graphics queue (index 0 of the chosen family) for the ImGui backend's
+    // font-atlas upload (Task 15). The app created at least one queue on this family
+    // (we picked it from pQueueCreateInfos), so queue index 0 is valid.
+    if (data.has_graphics_queue_family && data.disp.GetDeviceQueue) {
+        data.disp.GetDeviceQueue(*pDevice, data.graphics_queue_family, 0, &data.graphics_queue);
     }
 
     {

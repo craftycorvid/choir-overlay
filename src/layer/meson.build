@@ -11,14 +11,31 @@ layer_sources = files(
   'dispatch.cpp',
   'gating.cpp',
   'swapchain.cpp',
+  'imgui_renderer.cpp',
+)
+
+# Vendored Dear ImGui Vulkan backend, compiled INTO the layer (via the unity wrapper
+# TU that #includes imgui_impl_vulkan.cpp) with VK_NO_PROTOTYPES so its Vulkan calls go
+# through function pointers we supply via ImGui_ImplVulkan_LoadFunctions (which resolve
+# through the layer's own dispatch). The wrap's libimgui.so is built core-only
+# (vulkan=disabled) so there is no duplicate backend symbol to clash with.
+imgui_backend_lib = static_library('choir_imgui_vk_backend',
+  files('imgui_impl_vulkan_unity.cpp'),
+  include_directories: [imgui_backends_inc],
+  dependencies: [vulkan_dep, imgui_dep],
+  cpp_args: [
+    '-Wno-missing-field-initializers',
+    '-Wno-unused-parameter',
+  ],
 )
 
 libchoir_overlay = shared_library('choir_overlay',
   layer_sources,
   name_prefix: 'lib',
-  include_directories: ipc_inc,
-  link_with: libchoir_ipc,  # for later tasks (state client); harmless now
-  dependencies: [vulkan_dep],
+  include_directories: [ipc_inc, imgui_backends_inc],
+  link_with: [libchoir_ipc, imgui_backend_lib],  # ipc for later tasks; backend = vendored impl
+  # imgui_dep brings Dear ImGui CORE (no Vulkan backend) + its include dirs.
+  dependencies: [vulkan_dep, imgui_dep],
   # Vulkan structs are brace-initialized with just sType; the remaining
   # zero-init is intentional and idiomatic (matches the harness).
   cpp_args: ['-Wno-missing-field-initializers'],

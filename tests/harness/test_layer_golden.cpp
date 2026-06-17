@@ -1,11 +1,15 @@
-// Golden test for the Choir layer's present-time draw path (Task 14).
+// Golden test for the Choir layer's present-time draw path (Task 15).
 //
 // Runs vk_min_present WITH the Choir implicit layer forced on, captures a PPM
-// readback, and asserts the overlay's test rectangle was drawn ON TOP of the app's
-// blue clear: a pixel inside the rect region (40,40) reads ~red, and a pixel
-// outside (200,200) reads ~blue (the app clear). This proves the layer hooked
-// present, recorded a render pass into the swapchain image, and chained semaphores
-// correctly (otherwise the readback would be all blue, or the run would deadlock).
+// readback, and asserts the layer drew its Dear ImGui placeholder window ON TOP of
+// the app's blue clear. The placeholder window sits at (20,20), size (200,80), so it
+// covers roughly (20,20)..(220,100). We assert:
+//   * a pixel inside that window region (40,40) is NOT the app's pure blue — ImGui
+//     drew its window background/text/border there.
+//   * a far pixel (240,240), well outside the window, is still the app clear blue.
+// This proves the layer hooked present, initialized the ImGui Vulkan backend, and
+// recorded its draw data into the swapchain image (otherwise the readback would be
+// all blue, or the run would deadlock).
 //
 // Exit 77 (SKIP) is propagated from vk_min_present when no headless surface / no
 // present-capable device is available, so this test skips on no-GPU CI.
@@ -48,7 +52,7 @@ RGB pixel(const std::vector<uint8_t>& rgb, uint32_t w, uint32_t x, uint32_t y) {
 
 bool near(uint8_t a, int b, int tol = 24) { return std::abs(static_cast<int>(a) - b) <= tol; }
 
-bool is_red(RGB p) { return near(p.r, 255) && near(p.g, 0) && near(p.b, 0); }
+// The app's clear color (a dark blue): R=26 G=51 B=204 (see vk_min_present).
 bool is_blue(RGB p) { return near(p.r, 26) && near(p.g, 51) && near(p.b, 204); }
 
 }  // namespace
@@ -89,26 +93,31 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "golden: could not read PPM %s\n", out);
         return 1;
     }
-    if (w < 201 || h < 201) {
+    if (w < 241 || h < 241) {
         std::fprintf(stderr, "golden: readback too small (%ux%u)\n", w, h);
         return 1;
     }
 
-    const RGB inside = pixel(rgb, w, 40, 40);     // inside the 64x64 rect at (20,20)
-    const RGB outside = pixel(rgb, w, 200, 200);  // far outside the rect
-    std::printf("golden: inside(40,40)=(%u,%u,%u) outside(200,200)=(%u,%u,%u)\n",
+    const RGB inside = pixel(rgb, w, 40, 40);     // inside the ImGui window at (20,20)
+    const RGB outside = pixel(rgb, w, 240, 240);  // far outside the window
+    std::printf("golden: window(40,40)=(%u,%u,%u) far(240,240)=(%u,%u,%u)\n",
                 inside.r, inside.g, inside.b, outside.r, outside.g, outside.b);
 
     bool ok = true;
-    if (!is_red(inside)) {
-        std::fprintf(stderr, "golden: FAIL — pixel inside rect is not red (overlay not drawn)\n");
+    // ImGui drew its placeholder window (background/text/border) at (40,40), so that
+    // pixel must NOT be the app's pure blue clear.
+    if (is_blue(inside)) {
+        std::fprintf(stderr,
+                     "golden: FAIL — pixel inside the ImGui window is still the app blue "
+                     "(ImGui placeholder not drawn)\n");
         ok = false;
     }
+    // A pixel far from the window must still be the app clear blue.
     if (!is_blue(outside)) {
-        std::fprintf(stderr, "golden: FAIL — pixel outside rect is not the app clear blue\n");
+        std::fprintf(stderr, "golden: FAIL — far pixel is not the app clear blue\n");
         ok = false;
     }
     if (!ok) return 1;
-    std::puts("golden: PASS — overlay rectangle drawn over the app frame");
+    std::puts("golden: PASS — ImGui placeholder window drawn over the app frame");
     return 0;
 }

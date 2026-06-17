@@ -1,22 +1,16 @@
 #include "swapchain.hpp"
 
+#include <memory>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
 
 #include "dispatch.hpp"
 #include "gating.hpp"
+#include "imgui_renderer.hpp"
 
 namespace choir {
 namespace {
-
-// The overlay test rectangle (Task 14): a solid red 64x64 box at (20,20). When
-// Task 15 lands the ImGui backend this is replaced by the real overlay draw.
-constexpr int32_t kRectX = 20;
-constexpr int32_t kRectY = 20;
-constexpr uint32_t kRectW = 64;
-constexpr uint32_t kRectH = 64;
-constexpr float kRectColor[4] = {1.0f, 0.0f, 0.0f, 1.0f};  // opaque red
 
 // Per-swapchain-image overlay resources. One command buffer + fence + semaphore
 // per image so a buffer still in flight (FIFO can have several frames queued) is
@@ -49,6 +43,12 @@ struct SwapchainState {
     VkCommandPool pool = VK_NULL_HANDLE;
     std::vector<ImageState> images;
     bool ok = false;
+    // ImGui renderer for this swapchain (Task 15). Lazily init()'d on the first
+    // present (we have the render pass + image count by then). Held by unique_ptr so
+    // SwapchainState stays movable (the map move-assigns on insert/recreate) and so a
+    // failed/absent renderer is simply null. Torn down with the swapchain.
+    std::unique_ptr<ImguiRenderer> imgui;
+    bool imgui_tried = false;  // init attempted once; don't retry every present
 };
 
 std::mutex g_sc_lock;
@@ -61,6 +61,13 @@ std::unordered_map<VkSwapchainKHR, SwapchainState> g_swapchains;
 void destroy_state(SwapchainState& s) {
     const DeviceDispatch& d = s.dd->disp;
     VkDevice dev = s.device;
+    // Tear the ImGui backend down first (callers idle the device before destroy_state,
+    // so its descriptors/pipelines are safe to free). Frees its descriptor pool too.
+    if (s.imgui) {
+        s.imgui->shutdown();
+        s.imgui.reset();
+    }
+    s.imgui_tried = false;
     for (ImageState& img : s.images) {
         if (img.overlay_done && d.DestroySemaphore) d.DestroySemaphore(dev, img.overlay_done, nullptr);
         if (img.fence && d.DestroyFence) d.DestroyFence(dev, img.fence, nullptr);
@@ -250,11 +257,34 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
         d.WaitForFences(dev, 1, &img.fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS)
         return nullptr;
 
-    // Begin the render pass on this image's framebuffer (full extent), draw the
-    // overlay rectangle via vkCmdClearAttachments, end.
+    // Lazily initialize the ImGui renderer on the first present of this swapchain (we
+    // have the render pass + image count now). Try once; if it fails we leave it null
+    // and the render pass records an empty (LOAD-only) overlay — never crash the game.
+    if (!s.imgui_tried) {
+        s.imgui_tried = true;
+        s.imgui = std::make_unique<ImguiRenderer>();
+        if (!s.imgui->init(s.dd->instance, s.dd->physical_device, s.device,
+                           s.dd->graphics_queue_family, s.dd->graphics_queue,
+                           s.render_pass, static_cast<uint32_t>(s.images.size()),
+                           s.dd->api_version, s.dd->instance_gipa, d)) {
+            s.imgui.reset();  // not ready — overlay draws nothing this swapchain
+        }
+    }
+
+    // Build the ImGui draw list for this frame BEFORE recording the render pass
+    // (ImGui::NewFrame/Render record no GPU commands). With no renderer this is a
+    // no-op and the render pass below just LOADs the app's frame unchanged.
+    const bool draw_imgui = s.imgui && s.imgui->ready();
+    if (draw_imgui) s.imgui->begin_frame(s.extent);
+
+    // Begin the render pass on this image's framebuffer (full extent), record the
+    // ImGui draw data inside it, end.
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    if (d.BeginCommandBuffer(img.cmd, &bi) != VK_SUCCESS) return nullptr;
+    if (d.BeginCommandBuffer(img.cmd, &bi) != VK_SUCCESS) {
+        if (draw_imgui) s.imgui->end_frame(VK_NULL_HANDLE);  // discard the started frame
+        return nullptr;
+    }
 
     VkRenderPassBeginInfo rpbi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     rpbi.renderPass = s.render_pass;
@@ -264,27 +294,9 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
     rpbi.clearValueCount = 0;  // loadOp=LOAD: no clear values needed
     d.CmdBeginRenderPass(img.cmd, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
 
-    // Clamp the rectangle to the extent so a tiny swapchain can't overrun.
-    VkClearAttachment clear{};
-    clear.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    clear.colorAttachment = 0;
-    for (int c = 0; c < 4; ++c) clear.clearValue.color.float32[c] = kRectColor[c];
-
-    VkClearRect rect{};
-    rect.baseArrayLayer = 0;
-    rect.layerCount = 1;
-    int32_t x = kRectX, y = kRectY;
-    uint32_t w = kRectW, h = kRectH;
-    if (x >= static_cast<int32_t>(s.extent.width) || y >= static_cast<int32_t>(s.extent.height)) {
-        // Rect entirely off-screen — still produce a valid (empty) pass.
-        x = 0; y = 0; w = 0; h = 0;
-    } else {
-        if (x + w > s.extent.width) w = s.extent.width - x;
-        if (y + h > s.extent.height) h = s.extent.height - y;
-    }
-    rect.rect.offset = {x, y};
-    rect.rect.extent = {w, h};
-    if (w > 0 && h > 0) d.CmdClearAttachments(img.cmd, 1, &clear, 1, &rect);
+    // Record the ImGui draw data into the command buffer, inside the active render
+    // pass (replaces the Task-14 clear-rect placeholder).
+    if (draw_imgui) s.imgui->end_frame(img.cmd);
 
     d.CmdEndRenderPass(img.cmd);
     if (d.EndCommandBuffer(img.cmd) != VK_SUCCESS) return nullptr;
