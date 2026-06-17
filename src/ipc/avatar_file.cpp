@@ -67,6 +67,16 @@ bool read_avatar_rgba(const std::string& path, uint32_t& w, uint32_t& h, std::ve
 
     const uint32_t fw = get_u32_le(header + 4);
     const uint32_t fh = get_u32_le(header + 8);
+
+    // Reject absurd dimensions before allocating: a crafted cache file could
+    // otherwise trigger an unguarded std::bad_alloc (or a multi-GiB allocation) in
+    // the layer. Real avatars are <=256px; 8192 is a generous cap.
+    constexpr uint32_t kMaxDim = 8192;
+    if (fw == 0 || fh == 0 || fw > kMaxDim || fh > kMaxDim) {
+        std::fclose(f);
+        return false;
+    }
+
     const size_t body = static_cast<size_t>(fw) * static_cast<size_t>(fh) * 4u;
 
     std::vector<uint8_t> pixels(body);

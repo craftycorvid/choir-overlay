@@ -101,5 +101,19 @@ int main() {
         assert(from_json_str("{not valid json", bad) == false);
     }
 
+    // Out-of-range anchor (untrusted input) clamps to the default TopRight instead
+    // of producing an undefined enum value.
+    {
+        std::string j =
+            "{\"in_voice\":false,\"channel_name\":\"\",\"participants\":[],"
+            "\"notifications\":[],\"config\":{\"anchor\":99,\"scale\":1.0,"
+            "\"opacity\":1.0,\"show_all_members\":true,\"toast_anchor\":1,"
+            "\"toast_duration_ms\":5000},\"revision\":0}";
+        Snapshot s;
+        bool ok = from_json_str(j, s);
+        assert(ok);
+        assert(s.config.anchor == Anchor::TopRight);
+    }
+
     return 0;
 }

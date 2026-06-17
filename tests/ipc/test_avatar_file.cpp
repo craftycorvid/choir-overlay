@@ -64,6 +64,27 @@ int main() {
         std::remove(trunc.c_str());
     }
 
+    // Absurd dimensions in a crafted header -> rejected before any huge allocation.
+    // width=100000 (* height 1 * 4) would be ~400KB here, but the cap (8192) is what
+    // matters: a crafted width near UINT32_MAX would otherwise demand a giant vector.
+    {
+        std::string huge = "/tmp/choir_test_avatar_huge.rgba";
+        FILE* f = std::fopen(huge.c_str(), "wb");
+        assert(f);
+        std::fwrite("CHAV", 1, 4, f);
+        // width = 100000 (0x000186A0 LE), height = 1.
+        uint8_t dims[8] = {0xA0, 0x86, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00};
+        std::fwrite(dims, 1, 8, f);
+        // No body needed: validation happens before the body read/allocation.
+        std::fclose(f);
+
+        uint32_t hw = 0, hh = 0;
+        std::vector<uint8_t> hp;
+        assert(read_avatar_rgba(huge, hw, hh, hp) == false);
+        assert(hp.empty()); // nothing allocated/returned
+        std::remove(huge.c_str());
+    }
+
     std::remove(path.c_str());
     return 0;
 }

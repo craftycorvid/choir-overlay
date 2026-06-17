@@ -71,5 +71,63 @@ int main() {
         assert(f.payload == "");
     }
 
+    // Regression: integer-overflow OOB read. A header claiming total_len = 0xFFFFFFFD
+    // over a tiny buffer used to wrap (4 + total == 1) and pass the bounds check,
+    // then read ~4 GiB OOB. Must now be a protocol error: consume 0, set error,
+    // and NOT touch buf[5..]. (Run under ASan to confirm no OOB.)
+    {
+        uint8_t buf[8] = {0xFD, 0xFF, 0xFF, 0xFF, 0x02, 0x00, 0x00, 0x00};
+        DecodedFrame f;
+        bool err = false;
+        size_t consumed = try_decode_frame(buf, sizeof(buf), f, &err);
+        assert(consumed == 0);
+        assert(err == true);
+    }
+
+    // total_len == 0 -> protocol error (can't even hold the type byte).
+    {
+        uint8_t buf[8] = {0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00};
+        DecodedFrame f;
+        bool err = false;
+        size_t consumed = try_decode_frame(buf, sizeof(buf), f, &err);
+        assert(consumed == 0);
+        assert(err == true);
+    }
+
+    // total_len == kMaxFrameLen + 1 -> protocol error (over the cap).
+    {
+        const uint32_t over = static_cast<uint32_t>(kMaxFrameLen) + 1u;
+        uint8_t buf[8] = {
+            static_cast<uint8_t>(over & 0xFF),
+            static_cast<uint8_t>((over >> 8) & 0xFF),
+            static_cast<uint8_t>((over >> 16) & 0xFF),
+            static_cast<uint8_t>((over >> 24) & 0xFF),
+            0x02, 0x00, 0x00, 0x00,
+        };
+        DecodedFrame f;
+        bool err = false;
+        size_t consumed = try_decode_frame(buf, sizeof(buf), f, &err);
+        assert(consumed == 0);
+        assert(err == true);
+    }
+
+    // total_len == kMaxFrameLen is at the boundary: NOT a protocol error. With only a
+    // small buffer it just means "need more bytes" (consume 0, no error).
+    {
+        const uint32_t cap = static_cast<uint32_t>(kMaxFrameLen);
+        uint8_t buf[8] = {
+            static_cast<uint8_t>(cap & 0xFF),
+            static_cast<uint8_t>((cap >> 8) & 0xFF),
+            static_cast<uint8_t>((cap >> 16) & 0xFF),
+            static_cast<uint8_t>((cap >> 24) & 0xFF),
+            0x02, 0x00, 0x00, 0x00,
+        };
+        DecodedFrame f;
+        bool err = false;
+        size_t consumed = try_decode_frame(buf, sizeof(buf), f, &err);
+        assert(consumed == 0);
+        assert(err == false); // just needs more bytes, not malformed
+    }
+
     return 0;
 }

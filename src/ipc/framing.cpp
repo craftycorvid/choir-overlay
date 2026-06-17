@@ -25,10 +25,20 @@ bool write_frame(int fd, MsgType type, const std::string& payload) {
 }
 
 bool FrameReader::feed(int fd) {
+    if (failed_) return false; // stream already declared dead
+
     uint8_t tmp[4096];
     ssize_t n = ::read(fd, tmp, sizeof(tmp));
     if (n > 0) {
         buf_.insert(buf_.end(), tmp, tmp + n);
+        // Bound the backlog: a peer dribbling bytes for a frame whose header we
+        // haven't decoded yet must not let buf_ grow without limit. If we hold more
+        // than a max-size frame and still can't yield one, the stream is garbage.
+        if (buf_.size() > kMaxFrameLen) {
+            failed_ = true;
+            buf_.clear();
+            return false;
+        }
         return true;
     }
     if (n == 0) {
@@ -42,8 +52,17 @@ bool FrameReader::feed(int fd) {
 }
 
 bool FrameReader::next(DecodedFrame& out) {
-    size_t consumed = try_decode_frame(buf_.data(), buf_.size(), out);
-    if (consumed == 0) return false;
+    if (failed_) return false;
+
+    bool err = false;
+    size_t consumed = try_decode_frame(buf_.data(), buf_.size(), out, &err);
+    if (err) {
+        // Over-cap / zero-length frame: hostile or corrupt. Kill the stream.
+        failed_ = true;
+        buf_.clear();
+        return false;
+    }
+    if (consumed == 0) return false; // need more bytes
     buf_.erase(buf_.begin(), buf_.begin() + consumed);
     return true;
 }
