@@ -136,7 +136,7 @@ executable('auth_spike',
 # golden tests (Tasks 13-18) and for manual runs.
 #   vk_min_present: headless Vulkan swapchain present app (loads the layer into it)
 #   fake_host: scripted local-IPC server impersonating the choir host
-executable('vk_min_present',
+vk_min_present = executable('vk_min_present',
   'harness/vk_min_present.cpp',
   dependencies: [dependency('vulkan')],
   # Vulkan structs are brace-initialized with just sType ({VK_STRUCTURE_TYPE_...});
@@ -148,4 +148,21 @@ executable('fake_host',
   link_with: [libchoir_ipc],
   include_directories: [ipc_inc],
   dependencies: [json_dep],
+)
+
+# Task 13: load the Choir implicit layer into vk_min_present and confirm it is a
+# transparent pass-through. The layer .so + its build-tree manifest live in
+# build/src/layer (libchoir_overlay target above). We force the layer on via the
+# loader env vars and point VK_LAYER_PATH at that dir. vk_min_present exits 77
+# when no headless surface is available — meson treats exit 77 as SKIP.
+layer_dir = meson.current_build_dir() / '..' / 'src' / 'layer'
+test('layer_loads',
+  vk_min_present,
+  args: ['--frames', '2', '--layer-info'],
+  depends: [libchoir_overlay],
+  env: {
+    'VK_LAYER_PATH': layer_dir,
+    'VK_INSTANCE_LAYERS': 'VK_LAYER_choir_overlay_x86_64',
+    'VK_LOADER_LAYERS_ENABLE': 'VK_LAYER_choir_overlay_x86_64',
+  },
 )
