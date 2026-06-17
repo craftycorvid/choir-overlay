@@ -6,3 +6,9 @@ build-*/
 .venv/
 compile_commands.json
 .qt/
+
+# Meson subprojects: keep the .wrap files, ignore extracted sources + downloads.
+/subprojects/*/
+/subprojects/packagecache/
+/subprojects/packagefiles/
+/subprojects/.wraplock
