@@ -4,6 +4,10 @@ ipc_inc = include_directories('..')
 
 ipc_sources = files(
   'paths.cpp',
+  'state.cpp',
+  'protocol.cpp',
+  'framing.cpp',
+  'avatar_file.cpp',
 )
 
 libchoir_ipc = static_library('choir_ipc',
