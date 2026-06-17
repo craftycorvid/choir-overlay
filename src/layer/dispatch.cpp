@@ -89,7 +89,6 @@ void load_device_dispatch(DeviceDispatch& d, VkDevice device,
     LOAD(CmdBeginRenderPass);
     LOAD(CmdEndRenderPass);
     LOAD(CmdClearAttachments);
-    LOAD(QueueWaitIdle);
 #undef LOAD
 }
 

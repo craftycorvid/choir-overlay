@@ -28,6 +28,13 @@ struct ImageState {
     VkCommandBuffer cmd = VK_NULL_HANDLE;  // freed with the pool
     VkFence fence = VK_NULL_HANDLE;        // created signaled
     VkSemaphore overlay_done = VK_NULL_HANDLE;
+    // True once a QueueSubmit has been issued with `fence` and not yet waited.
+    // The fence is created signaled but nothing is queued on it, so this starts
+    // false: we must NOT wait on a fence that was never (or not yet) submitted,
+    // or a failed/aborted submit would leave it unsignaled and deadlock the next
+    // present of this image. Only wait when this is true; only set it true after
+    // a successful submit; reset the fence immediately before that submit.
+    bool fence_in_flight = false;
 };
 
 // Everything we build per swapchain. `ok` gates the present-time draw: if creation
@@ -222,19 +229,26 @@ bool build_state(SwapchainState& s, VkSwapchainKHR swapchain) {
     return true;
 }
 
-// Wait + reset an image's fence (so its command buffer is safe to reuse) and record
-// the overlay render pass into it. Returns the ImageState* on success, nullptr on
-// any failure. Does NOT submit — the present hook batches one submit across all
-// swapchains so the app's render-finished semaphores are waited exactly once.
+// Wait for an image's fence (so its command buffer is safe to reuse) and record the
+// overlay render pass into it. Returns the ImageState* on success, nullptr on any
+// failure. Does NOT reset the fence or submit — the present hook resets the fence
+// immediately before its single batched submit (across all swapchains, so the app's
+// render-finished semaphores are waited exactly once). Resetting at submit time, not
+// here, means a recording failure never leaves a reset-but-unsubmitted fence that a
+// later UINT64_MAX wait would block on forever.
 ImageState* record_one(SwapchainState& s, uint32_t image_index) {
     if (!s.ok || image_index >= s.images.size()) return nullptr;
     const DeviceDispatch& d = s.dd->disp;
     VkDevice dev = s.device;
     ImageState& img = s.images[image_index];
 
-    // Wait + reset this image's fence: its prior submit (if any) is done.
-    if (d.WaitForFences(dev, 1, &img.fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) return nullptr;
-    if (d.ResetFences(dev, 1, &img.fence) != VK_SUCCESS) return nullptr;
+    // Wait on this image's fence ONLY if a prior submit is actually in flight on it.
+    // If it isn't (first use, or a previous frame failed before/while submitting),
+    // the command buffer is not in use and the fence may be unsignaled — waiting on
+    // it would hang. The fence is reset + signalled only by the submit below.
+    if (img.fence_in_flight &&
+        d.WaitForFences(dev, 1, &img.fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+        return nullptr;
 
     // Begin the render pass on this image's framebuffer (full extent), draw the
     // overlay rectangle via vkCmdClearAttachments, end.
@@ -409,7 +423,6 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue,
     std::vector<VkSemaphore> overlay_sems;
     overlay_sems.reserve(n);
     VkSemaphore prev_done = VK_NULL_HANDLE;
-    bool consumed_app_sems = false;
 
     for (uint32_t i = 0; i < n; ++i) {
         ImageState* img = recorded[i];
@@ -427,7 +440,22 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue,
         si.pCommandBuffers = &img->cmd;
         si.signalSemaphoreCount = 1;
         si.pSignalSemaphores = &img->overlay_done;
+
+        // Reset the fence immediately before the submit that signals it. We waited
+        // on it (if it was in flight) back in record_one, so it is safe to reset
+        // now; resetting an already-unsignaled fence is legal and harmless. Mark it
+        // not-in-flight first so that if the submit below fails (or never happens),
+        // the next present of this image skips the wait instead of deadlocking on a
+        // reset-but-unsignaled fence.
+        img->fence_in_flight = false;
+        if (d.ResetFences(dd->device, 1, &img->fence) != VK_SUCCESS) {
+            if (i == 0) return forward();  // nothing submitted yet — clean fallback
+            break;                         // present what already submitted; no deadlock
+        }
         if (d.QueueSubmit(queue, 1, &si, img->fence) != VK_SUCCESS) {
+            // Submit failed: the fence was reset but is NOT in flight (left false
+            // above), so the next present of this image will skip the wait. No leak,
+            // no deadlock.
             if (i == 0) {
                 // Nothing submitted yet (app semaphores not consumed) — clean fallback.
                 return forward();
@@ -437,11 +465,11 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue,
             // the frame still displays and we never deadlock.
             break;
         }
-        if (i == 0) consumed_app_sems = true;
+        // Submit succeeded: the fence is now genuinely in flight and will signal.
+        img->fence_in_flight = true;
         overlay_sems.push_back(img->overlay_done);
         prev_done = img->overlay_done;
     }
-    (void)consumed_app_sems;
 
     VkPresentInfoKHR pi = *pPresentInfo;
     pi.waitSemaphoreCount = static_cast<uint32_t>(overlay_sems.size());

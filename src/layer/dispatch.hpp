@@ -75,7 +75,6 @@ struct DeviceDispatch {
     PFN_vkCmdBeginRenderPass CmdBeginRenderPass = nullptr;
     PFN_vkCmdEndRenderPass CmdEndRenderPass = nullptr;
     PFN_vkCmdClearAttachments CmdClearAttachments = nullptr;
-    PFN_vkQueueWaitIdle QueueWaitIdle = nullptr;
 };
 
 // Per-instance bookkeeping. `overlay_disabled` latches the gating decision so
