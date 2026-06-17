@@ -144,6 +144,15 @@ nlohmann::json build_subscribe(const std::string& evt, const nlohmann::json& arg
     };
 }
 
+nlohmann::json build_unsubscribe(const std::string& evt, const nlohmann::json& args) {
+    return json{
+        {"cmd", "UNSUBSCRIBE"},
+        {"evt", evt},
+        {"args", args},
+        {"nonce", next_nonce()},
+    };
+}
+
 std::optional<RpcEvent> parse_event(const nlohmann::json& frame) {
     if (!frame.is_object()) return std::nullopt;
     if (str_or(frame, "cmd") != "DISPATCH") return std::nullopt;

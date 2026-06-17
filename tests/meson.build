@@ -65,3 +65,12 @@ test('oauth',
     dependencies: [json_dep],
   ),
 )
+
+test('rpc_client',
+  executable('t_rpc_client',
+    'host/test_rpc_client.cpp',
+    link_with: [libchoir_ipc, libchoir_host_core],
+    include_directories: [ipc_inc, host_inc],
+    dependencies: [json_dep, dependency('threads')],
+  ),
+)

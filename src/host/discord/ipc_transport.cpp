@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -24,6 +25,17 @@ constexpr size_t kHeaderLen = 8;
 // Sanity cap so a hostile/garbled length field can't make us allocate wildly.
 // Discord RPC payloads are small JSON; 16 MiB is far beyond anything legitimate.
 constexpr int32_t kMaxPayloadLen = 16 * 1024 * 1024;
+
+// Bound on the receive backlog. If we accumulate more than this without yielding
+// a complete message, the peer is sending garbage (or a wedged stream) — drop
+// the connection rather than let rbuf_ grow without limit. Mirrors FrameReader
+// in src/ipc/framing.cpp.
+constexpr size_t kMaxRecvBuffer = 16 * 1024 * 1024;
+
+// Timeout (ms) for waiting on POLLOUT when the send buffer is full. A frozen or
+// wedged Discord client must not let us hot-spin a CPU core; on timeout we treat
+// the write as failed and drop the connection.
+constexpr int kWritePollTimeoutMs = 2000;
 
 int32_t read_le32(const uint8_t* p) {
     uint32_t v = static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
@@ -109,10 +121,23 @@ bool IpcTransport::send_raw(int op, const std::string& bytes) {
             continue;
         }
         if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            // Socket send buffer is full. For the small control/JSON frames this
-            // transport sends, spin briefly rather than introduce partial-write
-            // bookkeeping; the kernel drains quickly.
-            continue;
+            // Socket send buffer is full. Block (with a timeout) on POLLOUT rather
+            // than busy-spinning — a frozen/wedged Discord client must not let us
+            // hot-spin a CPU core. On timeout, treat as a write failure and drop
+            // the connection.
+            struct pollfd pfd{};
+            pfd.fd = fd_;
+            pfd.events = POLLOUT;
+            int pr = ::poll(&pfd, 1, kWritePollTimeoutMs);
+            if (pr > 0 && (pfd.revents & POLLOUT)) {
+                continue;  // writable again; retry the write
+            }
+            if (pr < 0 && errno == EINTR) {
+                continue;  // interrupted; retry the poll/write
+            }
+            // pr == 0 (timeout) or a poll error / hangup: the peer is wedged.
+            handle_closed();
+            return false;
         }
         // Hard error / peer gone.
         handle_closed();
@@ -155,6 +180,12 @@ void IpcTransport::poll() {
         ssize_t n = ::read(fd_, tmp, sizeof(tmp));
         if (n > 0) {
             rbuf_.insert(rbuf_.end(), tmp, tmp + n);
+            // Bound the backlog: if we are holding more than a max-size message
+            // and still cannot peel a complete one, the stream is garbage.
+            if (rbuf_.size() > kMaxRecvBuffer) {
+                handle_closed();
+                return;
+            }
             if (static_cast<size_t>(n) < sizeof(tmp)) break; // likely drained
             continue;
         }

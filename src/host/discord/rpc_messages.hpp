@@ -68,6 +68,11 @@ nlohmann::json build_authenticate(const std::string& access_token);
 // {"cmd":"SUBSCRIBE","evt":evt,"args":args,"nonce":...}
 nlohmann::json build_subscribe(const std::string& evt, const nlohmann::json& args);
 
+// {"cmd":"UNSUBSCRIBE","evt":evt,"args":args,"nonce":...}
+// Same shape as build_subscribe with cmd "UNSUBSCRIBE". Used by the FSM to drop
+// the previous channel's voice/speaking subscriptions on a channel switch.
+nlohmann::json build_unsubscribe(const std::string& evt, const nlohmann::json& args);
+
 // --- Parser ----------------------------------------------------------------
 
 // Parse an inbound DISPATCH frame ({"cmd":"DISPATCH","evt":...,"data":{...}}).
