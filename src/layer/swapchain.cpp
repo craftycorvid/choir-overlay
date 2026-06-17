@@ -1,13 +1,17 @@
 #include "swapchain.hpp"
 
+#include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
 
+#include "avatar_textures.hpp"
 #include "dispatch.hpp"
 #include "gating.hpp"
 #include "imgui_renderer.hpp"
+#include "state_client.hpp"
 
 namespace choir {
 namespace {
@@ -49,6 +53,10 @@ struct SwapchainState {
     // failed/absent renderer is simply null. Torn down with the swapchain.
     std::unique_ptr<ImguiRenderer> imgui;
     bool imgui_tried = false;  // init attempted once; don't retry every present
+    // Avatar texture cache for this swapchain (Task 16). Same lifetime as `imgui` (it
+    // uses that backend's descriptor pool + device). Created when the renderer first
+    // becomes ready; torn down in destroy_state BEFORE the renderer/device go away.
+    std::unique_ptr<AvatarTextures> avatars;
 };
 
 std::mutex g_sc_lock;
@@ -61,8 +69,16 @@ std::unordered_map<VkSwapchainKHR, SwapchainState> g_swapchains;
 void destroy_state(SwapchainState& s) {
     const DeviceDispatch& d = s.dd->disp;
     VkDevice dev = s.device;
-    // Tear the ImGui backend down first (callers idle the device before destroy_state,
-    // so its descriptors/pipelines are safe to free). Frees its descriptor pool too.
+    // Tear avatar textures down BEFORE the ImGui backend: they unregister their
+    // descriptors via the renderer (RemoveTexture) and free images/views/samplers/
+    // memory through the device. Callers idle the device before destroy_state, so the
+    // textures are not in flight. After this the renderer can drop its descriptor pool.
+    if (s.avatars) {
+        s.avatars->shutdown();
+        s.avatars.reset();
+    }
+    // Tear the ImGui backend down (callers idle the device before destroy_state, so
+    // its descriptors/pipelines are safe to free). Frees its descriptor pool too.
     if (s.imgui) {
         s.imgui->shutdown();
         s.imgui.reset();
@@ -257,6 +273,13 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
         d.WaitForFences(dev, 1, &img.fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS)
         return nullptr;
 
+    // The layer's process-singleton state client (lazily started on first reference).
+    // If the host sent a Disabled frame for this process, draw nothing — fall through
+    // to an empty (LOAD-only) overlay pass. (DISABLE_CHOIR_OVERLAY is handled earlier
+    // in QueuePresentKHR; this is the host-driven denylist path.)
+    StateClient& client = StateClient::instance();
+    const bool host_disabled = client.disabled();
+
     // Lazily initialize the ImGui renderer on the first present of this swapchain (we
     // have the render pass + image count now). Try once; if it fails we leave it null
     // and the render pass records an empty (LOAD-only) overlay — never crash the game.
@@ -271,10 +294,38 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
         }
     }
 
+    const bool renderer_ready = s.imgui && s.imgui->ready();
+
+    // Once the renderer is ready, create the avatar texture cache bound to it (it uses
+    // the renderer's device + descriptor pool). Created once per swapchain.
+    if (renderer_ready && !s.avatars) {
+        s.avatars = std::make_unique<AvatarTextures>();
+        s.avatars->init(s.imgui.get());
+    }
+
+    // Drain the client's pending avatar-load requests and create their Vulkan textures
+    // on THIS (render) thread — the only thread that may call Vulkan. Cached by hash,
+    // so repeats are cheap. We load even when host_disabled is false-but-not-in-voice;
+    // Task 17 will look them up by hash to draw the panel. Skip if host-disabled.
+    if (renderer_ready && s.avatars && !host_disabled) {
+        for (const AvatarReq& req : client.drain_avatar_requests())
+            s.avatars->get_or_load(req);
+        if (const char* dbg = ::getenv("CHOIR_DEBUG_AVATARS"); dbg && *dbg)
+            std::fprintf(stderr, "[choir] avatar textures loaded: %zu\n", s.avatars->size());
+    }
+
+    // Read the latest published snapshot (lock-free). Null until the host sends one;
+    // present still draws the placeholder window. Task 17 consumes this + the avatar
+    // textures to draw the real voice panel.
+    std::shared_ptr<const Snapshot> snapshot =
+        host_disabled ? nullptr : client.latest();
+    (void)snapshot;  // Task 17 uses it; for now only the debug-dump / load path matters
+
     // Build the ImGui draw list for this frame BEFORE recording the render pass
-    // (ImGui::NewFrame/Render record no GPU commands). With no renderer this is a
-    // no-op and the render pass below just LOADs the app's frame unchanged.
-    const bool draw_imgui = s.imgui && s.imgui->ready();
+    // (ImGui::NewFrame/Render record no GPU commands). With no renderer, or when the
+    // host disabled this process, this is a no-op and the render pass below just LOADs
+    // the app's frame unchanged.
+    const bool draw_imgui = renderer_ready && !host_disabled;
     if (draw_imgui) s.imgui->begin_frame(s.extent);
 
     // Begin the render pass on this image's framebuffer (full extent), record the

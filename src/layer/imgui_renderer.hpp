@@ -73,6 +73,26 @@ public:
 
     bool ready() const { return init_done_; }
 
+    // --- Avatar-texture support (Task 16). Called only on the render thread, with
+    // this renderer ready() and the same ImGui context active. ---
+
+    // The device this backend was initialized against (AvatarTextures creates its
+    // VkImage/buffer/sampler on it). VK_NULL_HANDLE before init.
+    VkDevice device() const { return device_; }
+
+    // The layer's device dispatch (null before init). AvatarTextures uses it for all
+    // its Vulkan calls (it never touches the global loader).
+    const DeviceDispatch* dispatch() const { return disp_; }
+
+    // Register a sampled image with the ImGui Vulkan backend, returning the
+    // VkDescriptorSet usable as an ImTextureID. Sets the ImGui context current first
+    // (the backend reads the current context). Returns VK_NULL_HANDLE if not ready().
+    VkDescriptorSet add_texture(VkSampler sampler, VkImageView view, VkImageLayout layout);
+
+    // Free a descriptor set previously returned by add_texture(). No-op when not
+    // ready() (the whole backend is gone, so the set is gone with it).
+    void remove_texture(VkDescriptorSet set);
+
 private:
     bool init_done_ = false;
     bool frame_started_ = false;  // begin_frame called this present, end_frame pending

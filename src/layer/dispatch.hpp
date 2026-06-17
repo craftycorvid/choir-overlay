@@ -79,6 +79,27 @@ struct DeviceDispatch {
     // its font-atlas + AddTexture descriptors from a pool we create and hand it.
     PFN_vkCreateDescriptorPool CreateDescriptorPool = nullptr;
     PFN_vkDestroyDescriptorPool DestroyDescriptorPool = nullptr;
+    // Image / buffer / memory / sampler entrypoints for avatar textures (Task 16).
+    // The render thread uploads each .rgba into a sampled VkImage via a staging
+    // buffer + one-shot copy, then registers a sampler+view with the ImGui backend.
+    PFN_vkCreateImage CreateImage = nullptr;
+    PFN_vkDestroyImage DestroyImage = nullptr;
+    PFN_vkGetImageMemoryRequirements GetImageMemoryRequirements = nullptr;
+    PFN_vkBindImageMemory BindImageMemory = nullptr;
+    PFN_vkCreateBuffer CreateBuffer = nullptr;
+    PFN_vkDestroyBuffer DestroyBuffer = nullptr;
+    PFN_vkGetBufferMemoryRequirements GetBufferMemoryRequirements = nullptr;
+    PFN_vkBindBufferMemory BindBufferMemory = nullptr;
+    PFN_vkAllocateMemory AllocateMemory = nullptr;
+    PFN_vkFreeMemory FreeMemory = nullptr;
+    PFN_vkMapMemory MapMemory = nullptr;
+    PFN_vkUnmapMemory UnmapMemory = nullptr;
+    PFN_vkFlushMappedMemoryRanges FlushMappedMemoryRanges = nullptr;
+    PFN_vkCreateSampler CreateSampler = nullptr;
+    PFN_vkDestroySampler DestroySampler = nullptr;
+    PFN_vkCmdCopyBufferToImage CmdCopyBufferToImage = nullptr;
+    PFN_vkCmdPipelineBarrier CmdPipelineBarrier = nullptr;
+    PFN_vkQueueWaitIdle QueueWaitIdle = nullptr;
 };
 
 // Per-instance bookkeeping. `overlay_disabled` latches the gating decision so
@@ -118,6 +139,10 @@ struct DeviceData {
     // backend (Task 15), built VK_NO_PROTOTYPES, resolves instance/physical-device
     // functions through this so it calls into the layer chain, not the loader.
     PFN_vkGetInstanceProcAddr instance_gipa = nullptr;
+    // Physical-device memory properties (instance-level fn) captured at device
+    // create. Avatar texture upload (Task 16) needs it to pick a device-local /
+    // host-visible memory type for the image + staging buffer.
+    PFN_vkGetPhysicalDeviceMemoryProperties get_phys_mem_props = nullptr;
 };
 
 // --- Hooked entrypoints (definitions in dispatch.cpp) ---

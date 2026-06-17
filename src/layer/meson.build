@@ -12,6 +12,8 @@ layer_sources = files(
   'gating.cpp',
   'swapchain.cpp',
   'imgui_renderer.cpp',
+  'state_client.cpp',
+  'avatar_textures.cpp',
 )
 
 # Vendored Dear ImGui Vulkan backend, compiled INTO the layer (via the unity wrapper
@@ -35,7 +37,9 @@ libchoir_overlay = shared_library('choir_overlay',
   include_directories: [ipc_inc, imgui_backends_inc],
   link_with: [libchoir_ipc, imgui_backend_lib],  # ipc for later tasks; backend = vendored impl
   # imgui_dep brings Dear ImGui CORE (no Vulkan backend) + its include dirs.
-  dependencies: [vulkan_dep, imgui_dep],
+  # threads: the state client runs its socket I/O on a std::thread.
+  # json_dep: the state client parses Snapshot/AvatarReady JSON (ipc/state.hpp).
+  dependencies: [vulkan_dep, imgui_dep, json_dep, dependency('threads')],
   # Vulkan structs are brace-initialized with just sType; the remaining
   # zero-init is intentional and idiomatic (matches the harness).
   cpp_args: ['-Wno-missing-field-initializers'],

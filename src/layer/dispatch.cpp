@@ -91,6 +91,24 @@ void load_device_dispatch(DeviceDispatch& d, VkDevice device,
     LOAD(CmdClearAttachments);
     LOAD(CreateDescriptorPool);
     LOAD(DestroyDescriptorPool);
+    LOAD(CreateImage);
+    LOAD(DestroyImage);
+    LOAD(GetImageMemoryRequirements);
+    LOAD(BindImageMemory);
+    LOAD(CreateBuffer);
+    LOAD(DestroyBuffer);
+    LOAD(GetBufferMemoryRequirements);
+    LOAD(BindBufferMemory);
+    LOAD(AllocateMemory);
+    LOAD(FreeMemory);
+    LOAD(MapMemory);
+    LOAD(UnmapMemory);
+    LOAD(FlushMappedMemoryRanges);
+    LOAD(CreateSampler);
+    LOAD(DestroySampler);
+    LOAD(CmdCopyBufferToImage);
+    LOAD(CmdPipelineBarrier);
+    LOAD(QueueWaitIdle);
 #undef LOAD
 }
 
@@ -195,6 +213,7 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physicalDevice,
         data.instance = idata->instance;
         data.api_version = idata->api_version;
         data.instance_gipa = idata->disp.GetInstanceProcAddr;
+        data.get_phys_mem_props = idata->disp.GetPhysicalDeviceMemoryProperties;
         if (idata->disp.GetPhysicalDeviceQueueFamilyProperties) {
             uint32_t qfc = 0;
             idata->disp.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &qfc, nullptr);

@@ -211,6 +211,19 @@ void ImguiRenderer::end_frame(VkCommandBuffer cmd) {
     frame_started_ = false;
 }
 
+VkDescriptorSet ImguiRenderer::add_texture(VkSampler sampler, VkImageView view,
+                                           VkImageLayout layout) {
+    if (!init_done_) return VK_NULL_HANDLE;
+    ImGui::SetCurrentContext(ctx_);
+    return ImGui_ImplVulkan_AddTexture(sampler, view, layout);
+}
+
+void ImguiRenderer::remove_texture(VkDescriptorSet set) {
+    if (!init_done_ || set == VK_NULL_HANDLE) return;
+    ImGui::SetCurrentContext(ctx_);
+    ImGui_ImplVulkan_RemoveTexture(set);
+}
+
 void ImguiRenderer::shutdown() {
     if (ctx_) ImGui::SetCurrentContext(ctx_);
 

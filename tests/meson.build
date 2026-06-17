@@ -143,7 +143,7 @@ vk_min_present = executable('vk_min_present',
   # the remaining zero-init is intentional and idiomatic.
   cpp_args: ['-Wno-missing-field-initializers'],
 )
-executable('fake_host',
+fake_host = executable('fake_host',
   'harness/fake_host.cpp',
   link_with: [libchoir_ipc],
   include_directories: [ipc_inc],
@@ -179,4 +179,20 @@ test('layer_golden',
   test_layer_golden,
   args: [vk_min_present.full_path(), layer_dir, meson.current_build_dir() / 'layer_golden.ppm'],
   depends: [libchoir_overlay, vk_min_present],
+)
+
+# Task 16: state-client + avatar-texture integration. The driver starts fake_host on
+# a temp XDG_RUNTIME_DIR, runs vk_min_present with the layer + CHOIR_DEBUG_DUMP, and
+# asserts the dumped snapshot matches fake_host's scripted state (3 participants, Bob
+# speaking, Carol self_mute). It also runs vk_min_present WITHOUT a host to prove the
+# layer is safe (no crash / no hang) when the socket is absent. vk_min_present's exit
+# 77 (no headless surface) is propagated as a SKIP.
+test('layer_state',
+  executable('test_layer_state',
+    'harness/test_layer_state.cpp',
+    include_directories: [ipc_inc],
+    dependencies: [json_dep],
+  ),
+  args: [vk_min_present.full_path(), fake_host.full_path(), layer_dir],
+  depends: [libchoir_overlay, vk_min_present, fake_host],
 )
