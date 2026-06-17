@@ -1,0 +1,299 @@
+#include "dispatch.hpp"
+
+#include <vulkan/vk_layer.h>
+
+#include <atomic>
+#include <cstdio>
+#include <mutex>
+#include <unordered_map>
+#include <vector>
+
+#include "gating.hpp"
+
+namespace choir {
+namespace {
+
+// Per-handle data, keyed by the dispatchable-handle loader key
+// (*reinterpret_cast<void**>(handle)) — the first pointer-sized word of any
+// dispatchable handle is the loader's dispatch table pointer, which is stable for
+// the lifetime of the handle and identical for child handles of the same parent.
+std::mutex g_lock;
+std::unordered_map<void*, InstanceData> g_instances;
+std::unordered_map<void*, DeviceData> g_devices;
+
+void* dispatch_key(void* handle) { return *reinterpret_cast<void**>(handle); }
+
+// Find the loader's VkLayerInstanceCreateInfo link (function == VK_LAYER_LINK_INFO)
+// in the pNext chain of a VkInstanceCreateInfo.
+VkLayerInstanceCreateInfo* find_instance_link(const VkInstanceCreateInfo* ci) {
+    auto* p = static_cast<const VkLayerInstanceCreateInfo*>(ci->pNext);
+    while (p && !(p->sType == VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO &&
+                  p->function == VK_LAYER_LINK_INFO)) {
+        p = static_cast<const VkLayerInstanceCreateInfo*>(p->pNext);
+    }
+    return const_cast<VkLayerInstanceCreateInfo*>(p);
+}
+
+VkLayerDeviceCreateInfo* find_device_link(const VkDeviceCreateInfo* ci) {
+    auto* p = static_cast<const VkLayerDeviceCreateInfo*>(ci->pNext);
+    while (p && !(p->sType == VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO &&
+                  p->function == VK_LAYER_LINK_INFO)) {
+        p = static_cast<const VkLayerDeviceCreateInfo*>(p->pNext);
+    }
+    return const_cast<VkLayerDeviceCreateInfo*>(p);
+}
+
+void load_instance_dispatch(InstanceDispatch& d, VkInstance instance,
+                            PFN_vkGetInstanceProcAddr gipa) {
+    d.GetInstanceProcAddr = gipa;
+#define LOAD(name) d.name = reinterpret_cast<PFN_vk##name>(gipa(instance, "vk" #name))
+    LOAD(DestroyInstance);
+    LOAD(EnumeratePhysicalDevices);
+    LOAD(GetPhysicalDeviceMemoryProperties);
+    LOAD(GetPhysicalDeviceQueueFamilyProperties);
+    LOAD(GetPhysicalDeviceSurfaceCapabilitiesKHR);
+    LOAD(GetPhysicalDeviceSurfaceFormatsKHR);
+#undef LOAD
+}
+
+void load_device_dispatch(DeviceDispatch& d, VkDevice device,
+                          PFN_vkGetDeviceProcAddr gdpa) {
+    d.GetDeviceProcAddr = gdpa;
+#define LOAD(name) d.name = reinterpret_cast<PFN_vk##name>(gdpa(device, "vk" #name))
+    LOAD(DestroyDevice);
+    LOAD(GetDeviceQueue);
+    LOAD(QueueSubmit);
+    LOAD(QueuePresentKHR);
+    LOAD(CreateSwapchainKHR);
+    LOAD(DestroySwapchainKHR);
+    LOAD(GetSwapchainImagesKHR);
+    LOAD(AcquireNextImageKHR);
+    LOAD(DeviceWaitIdle);
+    LOAD(CreateCommandPool);
+    LOAD(DestroyCommandPool);
+    LOAD(AllocateCommandBuffers);
+    LOAD(FreeCommandBuffers);
+    LOAD(BeginCommandBuffer);
+    LOAD(EndCommandBuffer);
+    LOAD(ResetCommandBuffer);
+    LOAD(CreateSemaphore);
+    LOAD(DestroySemaphore);
+    LOAD(CreateFence);
+    LOAD(DestroyFence);
+    LOAD(WaitForFences);
+    LOAD(ResetFences);
+    LOAD(CreateImageView);
+    LOAD(DestroyImageView);
+    LOAD(CreateRenderPass);
+    LOAD(DestroyRenderPass);
+    LOAD(CreateFramebuffer);
+    LOAD(DestroyFramebuffer);
+    LOAD(CmdBeginRenderPass);
+    LOAD(CmdEndRenderPass);
+    LOAD(CmdClearAttachments);
+    LOAD(CreateDescriptorPool);
+    LOAD(DestroyDescriptorPool);
+    LOAD(CreateImage);
+    LOAD(DestroyImage);
+    LOAD(GetImageMemoryRequirements);
+    LOAD(BindImageMemory);
+    LOAD(CreateBuffer);
+    LOAD(DestroyBuffer);
+    LOAD(GetBufferMemoryRequirements);
+    LOAD(BindBufferMemory);
+    LOAD(AllocateMemory);
+    LOAD(FreeMemory);
+    LOAD(MapMemory);
+    LOAD(UnmapMemory);
+    LOAD(FlushMappedMemoryRanges);
+    LOAD(CreateSampler);
+    LOAD(DestroySampler);
+    LOAD(CmdCopyBufferToImage);
+    LOAD(CmdPipelineBarrier);
+    LOAD(QueueWaitIdle);
+#undef LOAD
+}
+
+}  // namespace
+
+InstanceData* instance_data(void* dispatchable_handle) {
+    std::lock_guard<std::mutex> g(g_lock);
+    auto it = g_instances.find(dispatch_key(dispatchable_handle));
+    return it == g_instances.end() ? nullptr : &it->second;
+}
+
+DeviceData* device_data(void* dispatchable_handle) {
+    std::lock_guard<std::mutex> g(g_lock);
+    auto it = g_devices.find(dispatch_key(dispatchable_handle));
+    return it == g_devices.end() ? nullptr : &it->second;
+}
+
+void mark_overlay_failed(DeviceData* dd, const char* reason) {
+    if (!dd) return;
+    // exchange returns the PRIOR value: log only on the first 0->1 transition so a
+    // failing game does not spew a line every present.
+    if (!dd->overlay_failed.exchange(true, std::memory_order_release)) {
+        std::fprintf(stderr,
+                     "[choir] overlay disabled for this device (failure isolation): %s\n",
+                     reason ? reason : "unknown");
+        std::fflush(stderr);
+    }
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
+                                              const VkAllocationCallbacks* pAllocator,
+                                              VkInstance* pInstance) try {
+    VkLayerInstanceCreateInfo* link = find_instance_link(pCreateInfo);
+    if (!link || !link->u.pLayerInfo) return VK_ERROR_INITIALIZATION_FAILED;
+
+    PFN_vkGetInstanceProcAddr next_gipa =
+        link->u.pLayerInfo->pfnNextGetInstanceProcAddr;
+    auto next_create = reinterpret_cast<PFN_vkCreateInstance>(
+        next_gipa(VK_NULL_HANDLE, "vkCreateInstance"));
+    if (!next_create) return VK_ERROR_INITIALIZATION_FAILED;
+
+    // Advance the chain so the next layer sees its own link at the head.
+    link->u.pLayerInfo = link->u.pLayerInfo->pNext;
+
+    VkResult res = next_create(pCreateInfo, pAllocator, pInstance);
+    if (res != VK_SUCCESS) return res;
+
+    InstanceData data;
+    data.overlay_disabled = overlay_disabled();
+    // Capture the app's requested apiVersion (default 1.0 if it supplied no
+    // VkApplicationInfo). ImGui's Vulkan backend (Task 15) takes this; it is only
+    // consulted there for dynamic-rendering fn loading, which we never use.
+    if (pCreateInfo->pApplicationInfo && pCreateInfo->pApplicationInfo->apiVersion)
+        data.api_version = pCreateInfo->pApplicationInfo->apiVersion;
+    data.instance = *pInstance;
+    load_instance_dispatch(data.disp, *pInstance, next_gipa);
+
+    {
+        std::lock_guard<std::mutex> g(g_lock);
+        g_instances[dispatch_key(*pInstance)] = data;
+    }
+    return VK_SUCCESS;
+} catch (...) {
+    // A C++ exception must NEVER unwind through the C loader/app (UB). If our
+    // bookkeeping threw AFTER the instance was created the app already has a valid
+    // handle, so report success; otherwise report failure. We cannot have created the
+    // instance and lost *pInstance here because the only throwing work is after the
+    // down-chain create populated it, so SUCCESS is the safe answer when set.
+    return (pInstance && *pInstance != VK_NULL_HANDLE) ? VK_SUCCESS
+                                                       : VK_ERROR_INITIALIZATION_FAILED;
+}
+
+VKAPI_ATTR void VKAPI_CALL DestroyInstance(VkInstance instance,
+                                           const VkAllocationCallbacks* pAllocator) {
+    if (!instance) return;
+    PFN_vkDestroyInstance down = nullptr;
+    try {
+        std::lock_guard<std::mutex> g(g_lock);
+        void* key = dispatch_key(instance);
+        auto it = g_instances.find(key);
+        if (it != g_instances.end()) {
+            down = it->second.disp.DestroyInstance;
+            g_instances.erase(it);
+        }
+    } catch (...) {
+        // Map erase shouldn't throw, but never let an exception escape: still destroy.
+    }
+    if (down) down(instance, pAllocator);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physicalDevice,
+                                            const VkDeviceCreateInfo* pCreateInfo,
+                                            const VkAllocationCallbacks* pAllocator,
+                                            VkDevice* pDevice) try {
+    VkLayerDeviceCreateInfo* link = find_device_link(pCreateInfo);
+    if (!link || !link->u.pLayerInfo) return VK_ERROR_INITIALIZATION_FAILED;
+
+    PFN_vkGetInstanceProcAddr next_gipa =
+        link->u.pLayerInfo->pfnNextGetInstanceProcAddr;
+    PFN_vkGetDeviceProcAddr next_gdpa =
+        link->u.pLayerInfo->pfnNextGetDeviceProcAddr;
+    auto next_create = reinterpret_cast<PFN_vkCreateDevice>(
+        next_gipa(VK_NULL_HANDLE, "vkCreateDevice"));
+    if (!next_create) return VK_ERROR_INITIALIZATION_FAILED;
+
+    // Advance the chain so the next layer sees its own link at the head.
+    link->u.pLayerInfo = link->u.pLayerInfo->pNext;
+
+    VkResult res = next_create(physicalDevice, pCreateInfo, pAllocator, pDevice);
+    if (res != VK_SUCCESS) return res;
+
+    // DeviceData owns a std::atomic latch (not copyable), so emplace it directly in the
+    // map and populate it in place under the lock.
+    std::lock_guard<std::mutex> g(g_lock);
+    DeviceData& data = g_devices[dispatch_key(*pDevice)];
+    data.overlay_disabled = overlay_disabled();
+    data.device = *pDevice;
+    load_device_dispatch(data.disp, *pDevice, next_gdpa);
+
+    // Pick a graphics-capable queue family the app actually created a queue on, so
+    // the overlay command pool/buffers (and the present submit) run on a family that
+    // supports graphics (vkCmdBeginRenderPass / clear-attachments need GRAPHICS).
+    // The physical device shares the instance's loader dispatch key, so we can reach
+    // the instance dispatch table through it. (instance_data takes g_lock itself, but
+    // it is the SAME std::mutex held here — std::mutex is non-reentrant — so read the
+    // instance entry directly from g_instances instead of calling instance_data.)
+    data.physical_device = physicalDevice;
+    auto iit = g_instances.find(dispatch_key(physicalDevice));
+    if (iit != g_instances.end()) {
+        InstanceData& idata = iit->second;
+        data.instance = idata.instance;
+        data.api_version = idata.api_version;
+        data.instance_gipa = idata.disp.GetInstanceProcAddr;
+        data.get_phys_mem_props = idata.disp.GetPhysicalDeviceMemoryProperties;
+        if (idata.disp.GetPhysicalDeviceQueueFamilyProperties) {
+            uint32_t qfc = 0;
+            idata.disp.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &qfc, nullptr);
+            std::vector<VkQueueFamilyProperties> qfs(qfc);
+            idata.disp.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &qfc, qfs.data());
+            for (uint32_t i = 0; i < pCreateInfo->queueCreateInfoCount; ++i) {
+                uint32_t fam = pCreateInfo->pQueueCreateInfos[i].queueFamilyIndex;
+                if (fam < qfc && (qfs[fam].queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+                    data.graphics_queue_family = fam;
+                    data.has_graphics_queue_family = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    // Fetch the graphics queue (index 0 of the chosen family) for the ImGui backend's
+    // font-atlas upload (Task 15). The app created at least one queue on this family
+    // (we picked it from pQueueCreateInfos), so queue index 0 is valid.
+    if (data.has_graphics_queue_family && data.disp.GetDeviceQueue) {
+        data.disp.GetDeviceQueue(*pDevice, data.graphics_queue_family, 0, &data.graphics_queue);
+    }
+
+    return VK_SUCCESS;
+} catch (...) {
+    // Never let an exception unwind into the C loader/app. The device handle, if
+    // created down-chain, is valid even if our bookkeeping threw — report SUCCESS so
+    // the app keeps the working device (the overlay simply won't track it; the present
+    // hook falls back to forwarding because device_data() finds no entry).
+    return (pDevice && *pDevice != VK_NULL_HANDLE) ? VK_SUCCESS
+                                                   : VK_ERROR_INITIALIZATION_FAILED;
+}
+
+VKAPI_ATTR void VKAPI_CALL DestroyDevice(VkDevice device,
+                                         const VkAllocationCallbacks* pAllocator) {
+    if (!device) return;
+    PFN_vkDestroyDevice down = nullptr;
+    try {
+        std::lock_guard<std::mutex> g(g_lock);
+        void* key = dispatch_key(device);
+        auto it = g_devices.find(key);
+        if (it != g_devices.end()) {
+            down = it->second.disp.DestroyDevice;
+            g_devices.erase(it);
+        }
+    } catch (...) {
+        // Never let an exception escape: still destroy the device down-chain.
+    }
+    if (down) down(device, pAllocator);
+}
+
+}  // namespace choir

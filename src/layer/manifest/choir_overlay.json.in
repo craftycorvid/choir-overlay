@@ -1,0 +1,6 @@
+{ "file_format_version": "1.2.0",
+  "layer": { "name": "VK_LAYER_choir_overlay_@ARCH@",
+    "type": "GLOBAL", "library_path": "@LIBPATH@",
+    "api_version": "1.1.0", "implementation_version": "1",
+    "description": "Choir — an overlay for Discord",
+    "disable_environment": { "DISABLE_CHOIR_OVERLAY": "1" } } }
