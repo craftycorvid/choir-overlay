@@ -14,6 +14,7 @@ host_core_sources = files(
   'discord/oauth.cpp',
   'discord/rpc_client.cpp',
   'model/overlay_state.cpp',
+  'model/avatar_cache.cpp',
 )
 
 libchoir_host_core = static_library('choir_host_core',

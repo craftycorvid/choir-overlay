@@ -83,3 +83,11 @@ test('overlay_state',
     dependencies: [json_dep],
   ),
 )
+
+test('avatar_cache',
+  executable('t_avatar_cache',
+    'host/test_avatar_cache.cpp',
+    link_with: [libchoir_ipc, libchoir_host_core],
+    include_directories: [ipc_inc, host_inc],
+  ),
+)
