@@ -131,3 +131,21 @@ executable('auth_spike',
   include_directories: [ipc_inc, host_inc],
   dependencies: [json_dep, qt_full_dep],  # qt_http.cpp's QtAvatarSource needs QtGui (QImage)
 )
+
+# Vulkan layer test harness (Task 12). Not registered tests — used by the layer
+# golden tests (Tasks 13-18) and for manual runs.
+#   vk_min_present: headless Vulkan swapchain present app (loads the layer into it)
+#   fake_host: scripted local-IPC server impersonating the choir host
+executable('vk_min_present',
+  'harness/vk_min_present.cpp',
+  dependencies: [dependency('vulkan')],
+  # Vulkan structs are brace-initialized with just sType ({VK_STRUCTURE_TYPE_...});
+  # the remaining zero-init is intentional and idiomatic.
+  cpp_args: ['-Wno-missing-field-initializers'],
+)
+executable('fake_host',
+  'harness/fake_host.cpp',
+  link_with: [libchoir_ipc],
+  include_directories: [ipc_inc],
+  dependencies: [json_dep],
+)
