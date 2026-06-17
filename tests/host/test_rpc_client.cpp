@@ -105,6 +105,17 @@ struct FakeHttp : HttpPost {
         }
         return resp;
     }
+
+    // Streamkit mode (the RpcConfig default) goes through post_json; pull the
+    // code out of the JSON body so last_code still reflects the exchanged code.
+    HttpResponse post_json(const std::string&, const std::string& json_body,
+                           const std::vector<std::pair<std::string, std::string>>&) override {
+        ++call_count;
+        auto j = nlohmann::json::parse(json_body, nullptr, /*allow_exceptions=*/false);
+        if (j.is_object() && j.contains("code") && j["code"].is_string())
+            last_code = j["code"].get<std::string>();
+        return resp;
+    }
 };
 
 // Make a fresh listener bound at <dir>/discord-ipc-0.

@@ -55,25 +55,24 @@ TokenResult exchange_code(HttpPost& http, AuthMode mode, const std::string& code
                           const std::string& client_id, const std::string& client_secret) {
     TokenResult result;
 
-    std::string url;
-    std::vector<std::pair<std::string, std::string>> form;
-
+    HttpResponse resp;
     if (mode == AuthMode::Streamkit) {
-        // Streamkit holds the client secret server-side; we only send the code.
-        url = kStreamkitTokenUrl;
-        form = {{"code", code}};
+        // Streamkit's Cloudflare worker holds the client secret and expects a JSON
+        // body {"code": ...} (a form body makes it throw -> HTTP 500 "error code:
+        // 1101"). We only send the code.
+        const std::string json_body = json{{"code", code}}.dump();
+        resp = http.post_json(kStreamkitTokenUrl, json_body, /*headers=*/{});
     } else {
-        // Standard OAuth2 authorization_code grant with our own credentials.
-        url = kDiscordTokenUrl;
-        form = {
+        // Standard OAuth2 authorization_code grant with our own credentials,
+        // application/x-www-form-urlencoded per the Discord token endpoint spec.
+        const std::vector<std::pair<std::string, std::string>> form = {
             {"grant_type", "authorization_code"},
             {"code", code},
             {"client_id", client_id},
             {"client_secret", client_secret},
         };
+        resp = http.post(kDiscordTokenUrl, form, form_headers());
     }
-
-    HttpResponse resp = http.post(url, form, form_headers());
 
     if (resp.status != 200) {
         result.error = "token exchange failed: HTTP " + std::to_string(resp.status) +

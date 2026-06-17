@@ -35,6 +35,9 @@ public:
                       const std::vector<std::pair<std::string, std::string>>& form,
                       const std::vector<std::pair<std::string, std::string>>& headers) override;
 
+    HttpResponse post_json(const std::string& url, const std::string& json_body,
+                           const std::vector<std::pair<std::string, std::string>>& headers) override;
+
     // Network timeout in milliseconds (default 10s).
     void set_timeout_ms(int ms) { timeout_ms_ = ms; }
 

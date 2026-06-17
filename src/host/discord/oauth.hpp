@@ -20,10 +20,12 @@
 
 namespace choir {
 
-// PLACEHOLDER — the exact Streamkit token URL and request params are confirmed
-// by the Gate 7 / M0 auth spike against a real Discord client. It is isolated
-// to this single constant so the spike can correct it in one place. If M0 finds
-// the endpoint differs (path, host, or required params), update HERE.
+// Streamkit's hosted token-exchange endpoint (a Cloudflare Worker that holds
+// Discord's client_secret for app 207646673902501888). CONFIRMED by the M0 auth
+// spike: it expects a JSON body {"code":"..."} with Content-Type application/json
+// (a form-urlencoded body makes the worker throw -> HTTP 500 "error code: 1101").
+// On a bad/expired code it returns 200 with {} (no access_token). This is the
+// same call the "Discover" overlay makes.
 constexpr const char* kStreamkitTokenUrl = "https://streamkit.discord.com/overlay/token";
 
 // The standard Discord OAuth2 token endpoint (used in OwnApp mode).
@@ -35,13 +37,18 @@ struct HttpResponse {
     std::string body;
 };
 
-// Injectable HTTP POST seam. Implementations send `form` as
-// application/x-www-form-urlencoded with the given extra `headers`.
+// Injectable HTTP POST seam.
 struct HttpPost {
     virtual ~HttpPost() = default;
+    // Send `form` as application/x-www-form-urlencoded with the given extra
+    // `headers` (used by the standard Discord token endpoint, OwnApp mode).
     virtual HttpResponse post(const std::string& url,
                               const std::vector<std::pair<std::string, std::string>>& form,
                               const std::vector<std::pair<std::string, std::string>>& headers) = 0;
+    // Send a raw `json_body` with Content-Type application/json plus any extra
+    // `headers` (used by the Streamkit token endpoint, which wants JSON).
+    virtual HttpResponse post_json(const std::string& url, const std::string& json_body,
+                                   const std::vector<std::pair<std::string, std::string>>& headers) = 0;
 };
 
 enum class AuthMode { Streamkit, OwnApp };
@@ -57,8 +64,8 @@ struct TokenResult {
 
 // Exchange an authorization `code` for an access token.
 //
-// Streamkit: POST {code} to kStreamkitTokenUrl.
-// OwnApp:    POST {grant_type=authorization_code, code, client_id, client_secret}
+// Streamkit: POST JSON {"code":...} to kStreamkitTokenUrl.
+// OwnApp:    POST form {grant_type=authorization_code, code, client_id, client_secret}
 //            to kDiscordTokenUrl.
 //
 // Returns ok=false (never throws) on a non-200 status, an unparseable body, or

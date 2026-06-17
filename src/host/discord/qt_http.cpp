@@ -35,6 +35,34 @@ bool wait_for_reply(QNetworkReply* reply, int timeout_ms) {
     return !timed_out;
 }
 
+// Apply extra raw headers, POST the body, wait under a timeout, and read the
+// status + body. Shared by the form and JSON POST paths.
+HttpResponse run_post(QNetworkAccessManager* nam, QNetworkRequest& req,
+                      const std::vector<std::pair<std::string, std::string>>& headers,
+                      const std::string& body, int timeout_ms) {
+    HttpResponse out;
+    for (const auto& h : headers) {
+        req.setRawHeader(QByteArray(h.first.c_str(), static_cast<int>(h.first.size())),
+                         QByteArray(h.second.c_str(), static_cast<int>(h.second.size())));
+    }
+    QNetworkReply* reply =
+        nam->post(req, QByteArray(body.data(), static_cast<int>(body.size())));
+
+    if (!wait_for_reply(reply, timeout_ms)) {
+        out.status = 0;
+        out.body = "request timed out";
+        reply->deleteLater();
+        return out;
+    }
+
+    const QVariant code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
+    out.status = code.isValid() ? code.toInt() : 0;
+    const QByteArray data = reply->readAll();
+    out.body.assign(data.constData(), static_cast<size_t>(data.size()));
+    reply->deleteLater();
+    return out;
+}
+
 }  // namespace
 
 // ---- QtHttpPost ------------------------------------------------------------
@@ -46,8 +74,6 @@ HttpResponse QtHttpPost::post(
     const std::string& url,
     const std::vector<std::pair<std::string, std::string>>& form,
     const std::vector<std::pair<std::string, std::string>>& headers) {
-    HttpResponse out;
-
     // Build the application/x-www-form-urlencoded body using the same encoder
     // the OAuth layer expects (choir::url_encode).
     std::string body;
@@ -61,27 +87,15 @@ HttpResponse QtHttpPost::post(
     QNetworkRequest req((QUrl(QString::fromStdString(url))));
     req.setHeader(QNetworkRequest::ContentTypeHeader,
                   QStringLiteral("application/x-www-form-urlencoded"));
-    for (const auto& h : headers) {
-        req.setRawHeader(QByteArray(h.first.c_str(), static_cast<int>(h.first.size())),
-                         QByteArray(h.second.c_str(), static_cast<int>(h.second.size())));
-    }
+    return run_post(nam_, req, headers, body, timeout_ms_);
+}
 
-    QNetworkReply* reply =
-        nam_->post(req, QByteArray(body.data(), static_cast<int>(body.size())));
-
-    if (!wait_for_reply(reply, timeout_ms_)) {
-        out.status = 0;
-        out.body = "request timed out";
-        reply->deleteLater();
-        return out;
-    }
-
-    const QVariant code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
-    out.status = code.isValid() ? code.toInt() : 0;
-    const QByteArray data = reply->readAll();
-    out.body.assign(data.constData(), static_cast<size_t>(data.size()));
-    reply->deleteLater();
-    return out;
+HttpResponse QtHttpPost::post_json(
+    const std::string& url, const std::string& json_body,
+    const std::vector<std::pair<std::string, std::string>>& headers) {
+    QNetworkRequest req((QUrl(QString::fromStdString(url))));
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    return run_post(nam_, req, headers, json_body, timeout_ms_);
 }
 
 // ---- QtAvatarSource --------------------------------------------------------
