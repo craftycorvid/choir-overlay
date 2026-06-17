@@ -80,8 +80,10 @@ libchoir_overlay = shared_library('choir_overlay',
 # so `VK_LAYER_PATH=build/src/layer` finds the .so sitting beside the .json.
 # Arch suffix is x86_64 (64-bit Vulkan-only for v1).
 #
-# TODO(Task 19): the install-time manifest needs an ABSOLUTE library_path to the
-# installed .so under $XDG_DATA_HOME/vulkan/implicit_layer.d — done in packaging.
+# This build-tree manifest uses a relative library_path (./libchoir_overlay.so) for
+# tests via VK_LAYER_PATH=build/src/layer. The install-time manifest (absolute
+# library_path under $XDG_DATA_HOME/vulkan/implicit_layer.d) is written separately
+# by packaging/install-user.sh.
 configure_file(
   input: 'manifest/choir_overlay.json.in',
   output: 'choir_overlay.x86_64.json',
