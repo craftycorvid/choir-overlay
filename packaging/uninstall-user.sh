@@ -30,6 +30,9 @@ MANIFEST_PATH="${XDG_DATA_HOME_DIR}/vulkan/implicit_layer.d/choir_overlay.${ARCH
 INSTALLED_SO="${PREFIX}/lib/choir/libchoir_overlay.so"
 INSTALLED_BIN="${PREFIX}/bin/choir"
 AUTOSTART_PATH="${XDG_CONFIG_HOME_DIR}/autostart/choir.desktop"
+# meson installs the static ImGui dep alongside (it is linked privately into the
+# layer .so, never dlopen'd); clean up the orphan so uninstall leaves no trace.
+ORPHAN_IMGUI="${PREFIX}/lib/libimgui.a"
 
 rm_if() {  # rm_if <path> <label>
   if [ -e "$1" ]; then rm -f "$1" && echo ">> removed $2: $1"; else echo ">> (absent) $2: $1"; fi
@@ -41,6 +44,7 @@ rm_if "${MANIFEST_PATH}" "manifest"
 rm_if "${INSTALLED_SO}"  "layer .so"
 rm_if "${INSTALLED_BIN}" "host binary"
 rm_if "${AUTOSTART_PATH}" "autostart entry"
+rm_if "${ORPHAN_IMGUI}" "bundled static imgui"
 
 # Remove the now-empty ~/.local/lib/choir dir.
 if [ -d "${PREFIX}/lib/choir" ] && [ -z "$(ls -A "${PREFIX}/lib/choir")" ]; then
