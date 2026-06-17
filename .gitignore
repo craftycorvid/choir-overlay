@@ -1,0 +1,8 @@
+build/
+build-*/
+*.o
+*.so
+.cache/
+.venv/
+compile_commands.json
+.qt/
