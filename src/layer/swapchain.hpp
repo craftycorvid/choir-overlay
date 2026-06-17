@@ -1,10 +1,11 @@
 // Swapchain tracking + the present-time draw path for the Choir implicit layer.
 //
-// Task 14: hook vkCreateSwapchainKHR / vkDestroySwapchainKHR / vkQueuePresentKHR.
+// Hooks vkCreateSwapchainKHR / vkDestroySwapchainKHR / vkQueuePresentKHR.
 // For each presented image we record + submit a render pass that draws the overlay
-// (for this task: a solid test rectangle via vkCmdClearAttachments) on top of the
-// game's already-rendered frame, then forward the real present with correct
-// semaphore chaining (app render-finished -> overlay submit -> present).
+// (the Dear ImGui voice panel + notification toasts, see imgui_renderer.cpp /
+// overlay_ui.cpp) on top of the game's already-rendered frame, then forward the real
+// present with correct semaphore chaining (app render-finished -> overlay submit ->
+// present).
 //
 // The render pass uses loadOp=LOAD and initial/final layout PRESENT_SRC_KHR so it
 // preserves what the app drew and leaves the image presentable in place.

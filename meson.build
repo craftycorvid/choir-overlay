@@ -9,8 +9,16 @@ project('choir', 'cpp',
 # layer the physical-device/device handles are already unwrapped, so letting ImGui
 # call the loader's trampolines fails with "Invalid physicalDevice" — routing through
 # our dispatch is the correct fix. See src/layer/imgui_renderer.cpp.
+#
+# default_library=static forces the wrap to build a STATIC libimgui.a instead of a
+# shared libimgui.so. This is load-bearing for the injected layer: a separate
+# libimgui.so would expose global ImGui::* symbols that ELF interposition could bind
+# into a game that ALSO uses Dear ImGui (MangoHud, Steam overlay, the game itself),
+# crashing/corrupting state. Linked statically + a version script (src/layer/
+# choir_overlay.version) hiding everything but the 3 Vulkan loader entrypoints, the
+# layer carries its own private ImGui copy and exports none of it.
 imgui_dep = dependency('imgui', fallback: ['imgui', 'imgui_dep'],
-  default_options: ['vulkan=disabled'])
+  default_options: ['vulkan=disabled', 'default_library=static'])
 # Include dir holding the wrap's Vulkan backend (imgui_impl_vulkan.{h,cpp}). The layer
 # compiles the backend via a thin wrapper TU that #includes imgui_impl_vulkan.cpp from
 # here (a compile-time #include, so it sidesteps the meson source sandbox), built with

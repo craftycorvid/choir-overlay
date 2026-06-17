@@ -32,6 +32,27 @@ imgui_backend_lib = static_library('choir_imgui_vk_backend',
   ],
 )
 
+# Symbol-visibility hardening for an INJECTED layer (Task 19 / Task 15 review).
+#
+# The layer is dlopen'd into games that may ALSO use Dear ImGui (MangoHud, the Steam
+# overlay, the game itself). If our ImGui::* / ImGui_ImplVulkan_* symbols were exported,
+# ELF symbol interposition could bind a game's ImGui calls into OUR copy (or vice
+# versa) -> crash / state corruption. An injected layer MUST export ONLY the Vulkan
+# loader entrypoints.
+#
+# Two layers of defence, both required:
+#   1. --version-script: CHOIR_1 makes ONLY the 3 loader entrypoints global and
+#      forces `local: *` on everything else. This is load-bearing: even though the
+#      wrap stamps the ImGui backend TUs with -DIMGUI_API=visibility("default"), the
+#      version script demotes them to local so nothing but the 3 vk* symbols is
+#      dynamically exported. Verify with `nm -CD`.
+#   2. --exclude-libs,ALL: belt-and-braces — keeps symbols pulled in from the static
+#      archives (libimgui.a, the vendored backend, libchoir_ipc.a) out of the dynamic
+#      symbol table too.
+# imgui is now linked STATICALLY (default_library=static in the top-level meson.build),
+# so there is no separate libimgui.so to interpose against.
+layer_version_script = meson.current_source_dir() / 'choir_overlay.version'
+
 libchoir_overlay = shared_library('choir_overlay',
   layer_sources,
   name_prefix: 'lib',
@@ -45,7 +66,13 @@ libchoir_overlay = shared_library('choir_overlay',
   # zero-init is intentional and idiomatic (matches the harness).
   cpp_args: ['-Wno-missing-field-initializers'],
   gnu_symbol_visibility: 'hidden',  # only the explicitly-exported entrypoints leak
+  link_args: [
+    '-Wl,--version-script=@0@'.format(layer_version_script),
+    '-Wl,--exclude-libs,ALL',
+  ],
+  link_depends: layer_version_script,  # relink when the export list changes
   install: true,
+  install_dir: get_option('libdir') / 'choir',  # per-user-friendly: <prefix>/lib/choir
 )
 
 # Implicit-layer manifest for the BUILD TREE. The library_path is relative

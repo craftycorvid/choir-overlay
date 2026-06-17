@@ -1,0 +1,8 @@
+CHOIR_1 {
+  global:
+    vkGetInstanceProcAddr;
+    vkGetDeviceProcAddr;
+    vkNegotiateLoaderLayerInterfaceVersion;
+  local:
+    *;
+};

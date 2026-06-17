@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Choir
+GenericName=Discord Voice Overlay
+Comment=Wayland Discord voice overlay for Vulkan games (not affiliated with Discord Inc.)
+# Resolved to an absolute path (~/.local/bin/choir) by packaging/install-user.sh.
+Exec=choir
+Icon=choir
+Terminal=false
+Categories=Utility;Game;
+# XDG autostart key. install-user.sh installs this file with autostart DISABLED
+# (X-GNOME-Autostart-enabled=false) so launching choir on login is OPT-IN.
+# Run `install-user.sh --autostart` (or flip this to true) to enable it.
+X-GNOME-Autostart-enabled=false
