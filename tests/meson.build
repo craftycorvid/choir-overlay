@@ -38,3 +38,12 @@ test('avatar_file',
     include_directories: ipc_inc,
   ),
 )
+
+test('ipc_transport',
+  executable('t_ipc_transport',
+    'host/test_ipc_transport.cpp',
+    link_with: [libchoir_ipc, libchoir_host_core],
+    include_directories: [ipc_inc, host_inc],
+    dependencies: [json_dep],
+  ),
+)
