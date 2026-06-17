@@ -12,6 +12,7 @@ layer_sources = files(
   'gating.cpp',
   'swapchain.cpp',
   'imgui_renderer.cpp',
+  'overlay_ui.cpp',
   'state_client.cpp',
   'avatar_textures.cpp',
 )

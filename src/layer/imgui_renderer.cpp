@@ -14,6 +14,7 @@
 #include "imgui_impl_vulkan.h"
 
 #include "dispatch.hpp"
+#include "overlay_ui.hpp"
 
 namespace choir {
 namespace {
@@ -163,7 +164,9 @@ bool ImguiRenderer::init(VkInstance inst, VkPhysicalDevice phys, VkDevice dev,
     return true;
 }
 
-void ImguiRenderer::begin_frame(VkExtent2D extent) {
+void ImguiRenderer::begin_frame(VkExtent2D extent, const Snapshot* snap,
+                                AvatarTextures& textures, StateClient& client,
+                                int64_t now_ms) {
     if (!init_done_ || frame_started_) return;
     ImGui::SetCurrentContext(ctx_);
 
@@ -176,21 +179,15 @@ void ImguiRenderer::begin_frame(VkExtent2D extent) {
     io.DisplaySize = ImVec2(static_cast<float>(extent.width),
                             static_cast<float>(extent.height));
     // Some ImGui paths (e.g. timing) read DeltaTime; supply a sane fixed value since
-    // we have no real clock wired here (Task 17 may refine). Must be > 0.
+    // we have no real per-frame clock wired here. Must be > 0.
     io.DeltaTime = 1.0f / 60.0f;
 
     ImGui::NewFrame();
 
-    // --- Placeholder window (Task 15). Task 17 replaces this with the real overlay. ---
-    ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(200.0f, 80.0f), ImGuiCond_Always);
-    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                                   ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                                   ImGuiWindowFlags_NoCollapse;
-    if (ImGui::Begin("Choir", nullptr, flags)) {
-        ImGui::Text("Choir overlay");
-    }
-    ImGui::End();
+    // --- The real overlay (Task 17): voice panel + toasts, driven by the snapshot.
+    // draw_overlay draws NOTHING when snap is null or !snap->in_voice, so an empty
+    // frame is built and end_frame stays balanced (present forwards unchanged). ---
+    if (snap) draw_overlay(*snap, textures, client, extent, now_ms);
 
     ImGui::Render();
     frame_started_ = true;

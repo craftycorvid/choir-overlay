@@ -94,14 +94,25 @@ std::vector<AvatarReq> StateClient::drain_avatar_requests() {
     return out;
 }
 
+std::optional<AvatarReq> StateClient::avatar_for(const std::string& hash) const {
+    std::lock_guard<std::mutex> g(avatar_mutex_);
+    auto it = avatars_.find(hash);
+    if (it == avatars_.end()) return std::nullopt;
+    return it->second;
+}
+
 void StateClient::publish(std::shared_ptr<const Snapshot> snap) {
     latest_.store(std::move(snap));
 }
 
 void StateClient::enqueue_avatar(AvatarReq req) {
     std::lock_guard<std::mutex> g(avatar_mutex_);
-    // De-dup by hash: a repeated AvatarReady for the same hash need not re-enqueue
-    // (the render thread caches by hash anyway, but this keeps the queue small).
+    // RETAIN every AvatarReady (hash -> req) for the process lifetime so a recreated/
+    // second swapchain can resolve it on demand via avatar_for() (the host won't replay
+    // AvatarReady over the persistent connection). Latest announcement for a hash wins.
+    avatars_[req.hash] = req;
+    // De-dup the eager-load queue by hash: a repeated AvatarReady for the same hash need
+    // not re-enqueue (the render thread caches by hash anyway, but this keeps it small).
     for (const auto& r : avatar_queue_)
         if (r.hash == req.hash) return;
     avatar_queue_.push_back(std::move(req));

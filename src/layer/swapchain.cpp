@@ -1,5 +1,7 @@
 #include "swapchain.hpp"
 
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -303,10 +305,12 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
         s.avatars->init(s.imgui.get());
     }
 
-    // Drain the client's pending avatar-load requests and create their Vulkan textures
-    // on THIS (render) thread — the only thread that may call Vulkan. Cached by hash,
-    // so repeats are cheap. We load even when host_disabled is false-but-not-in-voice;
-    // Task 17 will look them up by hash to draw the panel. Skip if host-disabled.
+    // Eagerly drain any pending avatar-load requests and upload them on THIS (render)
+    // thread — the only thread that may call Vulkan. This is a best-effort warm-up; the
+    // robust resolution happens in draw_overlay, which resolves each participant's
+    // texture by hash from the StateClient's RETAINED avatar map (so a recreated/second
+    // swapchain — with a fresh AvatarTextures but no replayed AvatarReady — still shows
+    // avatars). Cached by hash, so repeats are cheap. Skip when host-disabled.
     if (renderer_ready && s.avatars && !host_disabled) {
         for (const AvatarReq& req : client.drain_avatar_requests())
             s.avatars->get_or_load(req);
@@ -314,19 +318,27 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
             std::fprintf(stderr, "[choir] avatar textures loaded: %zu\n", s.avatars->size());
     }
 
-    // Read the latest published snapshot (lock-free). Null until the host sends one;
-    // present still draws the placeholder window. Task 17 consumes this + the avatar
-    // textures to draw the real voice panel.
+    // Read the latest published snapshot (lock-free). Null until the host sends one (or
+    // when host-disabled); draw_overlay also gates on snap->in_voice, so the overlay is
+    // invisible until we are actually in a voice channel.
     std::shared_ptr<const Snapshot> snapshot =
         host_disabled ? nullptr : client.latest();
-    (void)snapshot;  // Task 17 uses it; for now only the debug-dump / load path matters
+
+    // Wall-clock ms for toast expiry: the host stamps Notification.created_ms with
+    // std::chrono::system_clock ms, so read the same clock domain here.
+    const int64_t now_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count();
 
     // Build the ImGui draw list for this frame BEFORE recording the render pass
     // (ImGui::NewFrame/Render record no GPU commands). With no renderer, or when the
     // host disabled this process, this is a no-op and the render pass below just LOADs
-    // the app's frame unchanged.
-    const bool draw_imgui = renderer_ready && !host_disabled;
-    if (draw_imgui) s.imgui->begin_frame(s.extent);
+    // the app's frame unchanged. draw_overlay itself draws nothing when the snapshot is
+    // null or !in_voice.
+    const bool draw_imgui = renderer_ready && !host_disabled && s.avatars;
+    if (draw_imgui)
+        s.imgui->begin_frame(s.extent, snapshot.get(), *s.avatars, client, now_ms);
 
     // Begin the render pass on this image's framebuffer (full extent), record the
     // ImGui draw data inside it, end.

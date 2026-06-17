@@ -33,6 +33,9 @@ struct ImGuiContext;
 namespace choir {
 
 struct DeviceDispatch;  // src/layer/dispatch.hpp
+struct Snapshot;        // ipc/state.hpp
+class AvatarTextures;   // src/layer/avatar_textures.hpp
+class StateClient;      // src/layer/state_client.hpp
 
 class ImguiRenderer {
 public:
@@ -56,9 +59,16 @@ public:
               uint32_t api_version, PFN_vkGetInstanceProcAddr gipa,
               const DeviceDispatch& disp);
 
-    // Begin a frame for the given framebuffer extent. Sets io.DisplaySize and builds
-    // the placeholder ImGui window. No platform backend. No GPU commands recorded.
-    void begin_frame(VkExtent2D extent);
+    // Begin and build a frame for the given framebuffer extent: NewFrame -> draw the
+    // real overlay (voice panel + toasts) from `snap` -> Render. No platform backend,
+    // no GPU commands recorded (Render only builds draw lists; end_frame records them).
+    //
+    // `snap` is the latest published snapshot (may be null if the host hasn't sent one);
+    // when null or !snap->in_voice nothing visible is drawn (an empty frame is built so
+    // end_frame is still balanced). `textures`/`client` resolve avatar textures by hash;
+    // `now_ms` is a wall-clock ms timestamp for toast expiry.
+    void begin_frame(VkExtent2D extent, const Snapshot* snap, AvatarTextures& textures,
+                     StateClient& client, int64_t now_ms);
 
     // Record the current ImGui draw data into `cmd`. MUST be called inside the active
     // render pass (between vkCmdBeginRenderPass / vkCmdEndRenderPass). The font atlas

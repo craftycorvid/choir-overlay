@@ -28,8 +28,10 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "ipc/state.hpp"
@@ -65,7 +67,21 @@ public:
 
     // Return and clear the pending avatar-load requests. Called by the render thread,
     // which then creates the Vulkan textures (it has the device). Thread-safe.
+    //
+    // NOTE: this is a convenience for eager loading; the robust path is avatar_for()
+    // below. Every AvatarReady is ALSO retained in a hash->AvatarReq map (see
+    // avatar_for) so a recreated/second swapchain — which gets a fresh AvatarTextures
+    // but no replayed AvatarReady frames over the persistent connection — can still
+    // resolve avatars on demand by hash.
     std::vector<AvatarReq> drain_avatar_requests();
+
+    // Look up the retained AvatarReq for a hash (every AvatarReady the host ever sent
+    // is kept here, accumulated, mutex-guarded). The render thread calls this when a
+    // participant's texture isn't loaded yet, then feeds the result to
+    // AvatarTextures::get_or_load. Returns nullopt if the host never announced `hash`.
+    // Thread-safe; safe to call from the render thread concurrently with the client
+    // thread receiving more AvatarReady frames.
+    std::optional<AvatarReq> avatar_for(const std::string& hash) const;
 
 private:
     StateClient();
@@ -87,8 +103,14 @@ private:
     std::atomic<std::shared_ptr<const Snapshot>> latest_;
     std::atomic<bool> disabled_{false};
 
-    std::mutex avatar_mutex_;
+    // mutable so avatar_for() (a const accessor for the render thread) can lock it.
+    mutable std::mutex avatar_mutex_;
     std::vector<AvatarReq> avatar_queue_;
+    // Retained map of every AvatarReady ever received (hash -> req). Accumulates for
+    // the process lifetime; the render thread resolves textures from it on demand so
+    // avatars survive a swapchain recreate (the host won't re-send AvatarReady over the
+    // persistent connection). Guarded by avatar_mutex_ alongside the drain queue.
+    std::unordered_map<std::string, AvatarReq> avatars_;
 };
 
 }  // namespace choir

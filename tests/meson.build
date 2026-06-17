@@ -167,18 +167,22 @@ test('layer_loads',
   },
 )
 
-# Task 14: golden draw-path test. Runs vk_min_present with the layer forced on (the
-# test driver sets the loader env vars + spawns vk_min_present), reads the PPM
-# readback, and asserts the overlay rectangle is red inside / blue (app clear)
-# outside. vk_min_present's exit 77 (no headless surface) is propagated as a SKIP.
+# Task 17: feature-based golden test for the real overlay. The driver starts fake_host
+# on a temp XDG_RUNTIME_DIR, runs vk_min_present with the layer + readback, and asserts
+# the voice panel + three avatar colors (red/green/blue) + Bob's speaking ring + Carol's
+# mute glyph are drawn in the panel region while a far pixel stays the app blue. It also
+# runs a --recreate present (avatars must survive the swapchain rebuild via the retention
+# fix) and a no-host present (overlay draws nothing; frame stays blue). vk_min_present's
+# exit 77 (no headless surface) is propagated as a SKIP.
 test_layer_golden = executable('test_layer_golden',
   'harness/test_layer_golden.cpp',
   cpp_args: ['-Wno-missing-field-initializers'],
 )
 test('layer_golden',
   test_layer_golden,
-  args: [vk_min_present.full_path(), layer_dir, meson.current_build_dir() / 'layer_golden.ppm'],
-  depends: [libchoir_overlay, vk_min_present],
+  args: [vk_min_present.full_path(), fake_host.full_path(), layer_dir,
+         meson.current_build_dir() / 'layer_golden.ppm'],
+  depends: [libchoir_overlay, vk_min_present, fake_host],
 )
 
 # Task 16: state-client + avatar-texture integration. The driver starts fake_host on
