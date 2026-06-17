@@ -47,3 +47,12 @@ test('ipc_transport',
     dependencies: [json_dep],
   ),
 )
+
+test('rpc_messages',
+  executable('t_rpc_messages',
+    'host/test_rpc_messages.cpp',
+    link_with: [libchoir_ipc, libchoir_host_core],
+    include_directories: [ipc_inc, host_inc],
+    dependencies: [json_dep],
+  ),
+)
