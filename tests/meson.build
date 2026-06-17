@@ -108,3 +108,15 @@ test('denylist',
     include_directories: [ipc_inc, host_inc],
   ),
 )
+
+# StateServer test: needs a Qt event loop (QtCore) + QtNetwork (QLocalServer),
+# but NOT Widgets/Gui — it talks to the server with a raw AF_UNIX client.
+test('state_server',
+  executable('t_state_server',
+    'host/test_state_server.cpp',
+    files('../src/host/server/state_server.cpp'),
+    link_with: [libchoir_ipc, libchoir_host_core],
+    include_directories: [ipc_inc, host_inc],
+    dependencies: [json_dep, qt_core_net_dep],
+  ),
+)
