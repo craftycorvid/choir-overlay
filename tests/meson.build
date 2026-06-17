@@ -74,3 +74,12 @@ test('rpc_client',
     dependencies: [json_dep, dependency('threads')],
   ),
 )
+
+test('overlay_state',
+  executable('t_overlay_state',
+    'host/test_overlay_state.cpp',
+    link_with: [libchoir_ipc, libchoir_host_core],
+    include_directories: [ipc_inc, host_inc],
+    dependencies: [json_dep],
+  ),
+)

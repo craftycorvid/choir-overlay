@@ -13,6 +13,7 @@ host_core_sources = files(
   'discord/rpc_messages.cpp',
   'discord/oauth.cpp',
   'discord/rpc_client.cpp',
+  'model/overlay_state.cpp',
 )
 
 libchoir_host_core = static_library('choir_host_core',
