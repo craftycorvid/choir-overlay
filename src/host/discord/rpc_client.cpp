@@ -93,6 +93,17 @@ void RpcClient::try_connect() {
 }
 
 void RpcClient::poll() {
+    // Re-entrancy guard. The host pumps poll() from a periodic timer; the OAuth
+    // token exchange (exchange_code, called from on_message) can run a nested
+    // event loop in the Qt HttpPost impl, which keeps that timer firing and would
+    // otherwise re-enter poll() while a connection step is mid-flight. Bail if so.
+    if (in_poll_) return;
+    struct Guard {
+        bool& f;
+        ~Guard() { f = false; }
+    } guard{in_poll_};
+    in_poll_ = true;
+
     // Drive a due reconnect first so a fresh connection is established before we
     // try to read from it.
     if (reconnect_pending_ && !stopped_ && now_ms_() >= reconnect_at_ms_) {

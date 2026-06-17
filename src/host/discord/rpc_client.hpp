@@ -97,6 +97,7 @@ private:
     bool stopped_ = false;            // stop() called: no reconnect
     bool reconnect_pending_ = false;  // a reconnect is scheduled
     int64_t reconnect_at_ms_ = 0;     // when the scheduled reconnect is due
+    bool in_poll_ = false;            // re-entrancy guard for poll() (see poll())
 };
 
 }  // namespace choir
