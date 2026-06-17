@@ -120,3 +120,14 @@ test('state_server',
     dependencies: [json_dep, qt_core_net_dep],
   ),
 )
+
+# M0 auth spike (Task 7 gate): an interactive, manually-run binary that streams
+# live voice events from a real Discord client. Built (so it's ready to run) but
+# NOT registered as a test — it needs a real Discord client + human OAuth consent.
+executable('auth_spike',
+  'harness/auth_spike.cpp',
+  files('../src/host/discord/qt_http.cpp'),
+  link_with: [libchoir_ipc, libchoir_host_core],
+  include_directories: [ipc_inc, host_inc],
+  dependencies: [json_dep, qt_full_dep],  # qt_http.cpp's QtAvatarSource needs QtGui (QImage)
+)
