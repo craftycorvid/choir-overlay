@@ -117,7 +117,11 @@ pid_t spawn_fake_host(const char* path, const std::string& cache) {
     if (pid < 0) return -1;
     if (pid == 0) {
         // fake_host binds the abstract socket named by $CHOIR_SOCKET (inherited).
-        const char* argv[] = {path, "--cache-dir", cache.c_str(), nullptr};
+        // --all-speaking: every indicator is at FULL alpha so the per-color avatar checks
+        // are reliable (non-speaking indicators are dimmed and blend toward the blue clear,
+        // which is unpredictable in pixel space; the dim/fade easing is unit-tested in
+        // test_fade instead).
+        const char* argv[] = {path, "--cache-dir", cache.c_str(), "--all-speaking", nullptr};
         ::execv(path, const_cast<char* const*>(argv));
         ::_exit(127);
     }
@@ -239,11 +243,12 @@ int main(int argc, char** argv) {
     check(any_pixel(rgb, w, h, px0, py0, px1, py1, is_green), "no GREEN avatar pixel in panel");
     check(any_pixel(rgb, w, h, px0, py0, px1, py1, is_blue), "no BLUE avatar pixel in panel");
 
-    // Bob (green) is the only speaker: his green ring sits just left of his avatar's solid
-    // edge (~x28). Scan the narrow band x[26..31) over the full panel height (robust to the
-    // exact row offset now that there's no channel header) — any green there is his ring.
+    // Speakers get a green ring just left of the avatar's solid edge (~x28). Scan the
+    // narrow band x[26..31) over the full panel height (robust to the exact row offset now
+    // that there's no channel header) — green there is a speaking ring (the indicator path
+    // ran). With --all-speaking every row has one.
     check(any_pixel(rgb, w, h, 26, py0, 31, py1, is_green),
-          "no green speaking-ring pixel outside Bob's avatar");
+          "no green speaking-ring pixel beside an avatar");
 
     // Carol (blue, self_mute) is the only muted user: her red mute-glyph slash sits at the
     // panel's right edge. Scan x[208..240) over the full panel height — the only red at the

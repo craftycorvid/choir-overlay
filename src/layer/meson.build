@@ -6,6 +6,10 @@
 # obtained from the chain, never libvulkan symbols directly).
 vulkan_dep = dependency('vulkan')
 
+# Exposed so tests can include layer headers (e.g. fade.hpp) without an
+# include_directories sandbox violation from the tests/ subdir.
+layer_inc = include_directories('.')
+
 layer_sources = files(
   'layer_entry.cpp',
   'dispatch.cpp',

@@ -8,13 +8,15 @@
 #include "overlay_ui.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "imgui.h"
 
 #include "avatar_textures.hpp"
+#include "fade.hpp"
 #include "ipc/state.hpp"
 #include "state_client.hpp"
 
@@ -34,6 +36,19 @@ constexpr float kRound = 8.0f;         // toast background corner rounding
 constexpr float kNamePadX = 6.0f;      // per-name background "pill" horizontal padding
 constexpr float kNamePadY = 2.0f;      // per-name background "pill" vertical padding
 constexpr float kNameRound = 5.0f;     // per-name background corner rounding
+
+// Per-participant opacity easing: dim when idle, quick fade up when speaking.
+constexpr float kIdleAlpha = 0.40f;    // opacity of a non-speaking indicator
+constexpr float kTauUp = 0.05f;        // quick fade-up time constant (s)
+constexpr float kTauDown = 0.18f;      // gentler fade-down time constant (s)
+
+// Multiply the alpha channel of an ImGui packed color by `m` (clamped to [0,1]).
+ImU32 scale_alpha(ImU32 col, float m) {
+    if (m < 0.0f) m = 0.0f; else if (m > 1.0f) m = 1.0f;
+    const float a = static_cast<float>((col >> IM_COL32_A_SHIFT) & 0xFFu) * m;
+    const ImU32 ai = static_cast<ImU32>(a + 0.5f) & 0xFFu;
+    return (col & ~(0xFFu << IM_COL32_A_SHIFT)) | (ai << IM_COL32_A_SHIFT);
+}
 
 constexpr float kToastWidth = 240.0f;
 constexpr float kToastPad = 10.0f;
@@ -73,9 +88,9 @@ ImVec2 anchored_pos(Anchor anchor, VkExtent2D extent, ImVec2 size, float margin)
 
 // Draw a small mic-off glyph (a mic capsule + stand crossed by a red slash) centered
 // near (cx,cy) at radius r. Pure draw-list primitives — no font/icon assets.
-void draw_mic_off(ImDrawList* dl, float cx, float cy, float r) {
-    const ImU32 fg = IM_COL32(230, 230, 235, 255);
-    const ImU32 slash = IM_COL32(235, 70, 70, 255);
+void draw_mic_off(ImDrawList* dl, float cx, float cy, float r, float a) {
+    const ImU32 fg = scale_alpha(IM_COL32(230, 230, 235, 255), a);
+    const ImU32 slash = scale_alpha(IM_COL32(235, 70, 70, 255), a);
     // Mic body: a vertical rounded capsule.
     const float bw = r * 0.7f, bh = r * 1.1f;
     dl->AddRectFilled(ImVec2(cx - bw * 0.5f, cy - bh * 0.6f),
@@ -89,9 +104,9 @@ void draw_mic_off(ImDrawList* dl, float cx, float cy, float r) {
 // Draw a small headphones-off glyph (a headband arc + two earcups crossed by a red
 // slash) centered near (cx,cy) at radius r. Distinct from the mic-off glyph so muted
 // vs deafened are visually distinguishable.
-void draw_deaf(ImDrawList* dl, float cx, float cy, float r) {
-    const ImU32 fg = IM_COL32(230, 230, 235, 255);
-    const ImU32 slash = IM_COL32(235, 70, 70, 255);
+void draw_deaf(ImDrawList* dl, float cx, float cy, float r, float a) {
+    const ImU32 fg = scale_alpha(IM_COL32(230, 230, 235, 255), a);
+    const ImU32 slash = scale_alpha(IM_COL32(235, 70, 70, 255), a);
     // Headband: a half-circle arc across the top.
     dl->PathArcTo(ImVec2(cx, cy), r * 0.85f, kPi, 2.0f * kPi, 12);
     dl->PathStroke(fg, ImDrawFlags_None, 1.8f);
@@ -121,7 +136,7 @@ ImTextureID resolve_avatar(const Participant& p, AvatarTextures& textures,
 
 // --- Voice participant panel ---------------------------------------------------------
 void draw_voice_panel(const Snapshot& snap, AvatarTextures& textures, StateClient& client,
-                      VkExtent2D extent) {
+                      VkExtent2D extent, int64_t now_ms) {
     const AppearanceConfig& cfg = snap.config;
     const float s = cfg.scale > 0.05f ? cfg.scale : 1.0f;
 
@@ -133,6 +148,33 @@ void draw_voice_panel(const Snapshot& snap, AvatarTextures& textures, StateClien
         rows.push_back(&p);
     }
     if (rows.empty()) return;  // nothing to show (e.g. speakers-only with no speakers)
+
+    // Per-participant opacity easing (persists across frames; single render thread).
+    // Each indicator sits at kIdleAlpha and quickly fades up to 1.0 while speaking,
+    // easing back down when it stops. dt comes from the present timestamp.
+    static std::unordered_map<std::string, float> g_anim;  // user_id -> current alpha
+    static int64_t g_last_ms = 0;
+    float dt = (g_last_ms == 0) ? 0.0f : static_cast<float>(now_ms - g_last_ms) / 1000.0f;
+    g_last_ms = now_ms;
+    dt = std::clamp(dt, 0.0f, 0.25f);  // ignore negatives / clamp big gaps (post-stall)
+
+    std::unordered_set<std::string> seen;
+    for (const Participant* pp : rows) {
+        seen.insert(pp->user_id);
+        const float target = pp->speaking ? 1.0f : kIdleAlpha;
+        auto it = g_anim.find(pp->user_id);
+        if (it == g_anim.end()) {
+            g_anim.emplace(pp->user_id, target);  // first sight: no fade-in on appear
+        } else {
+            const float tau = (target > it->second) ? kTauUp : kTauDown;
+            it->second = fade_toward(it->second, target, dt, tau);
+        }
+    }
+    // Drop entries for participants who left so the map stays bounded.
+    for (auto it = g_anim.begin(); it != g_anim.end();) {
+        if (seen.count(it->first)) ++it;
+        else it = g_anim.erase(it);
+    }
 
     const float pad = kPad * s;
     const float avatar = kAvatar * s;
@@ -169,20 +211,26 @@ void draw_voice_panel(const Snapshot& snap, AvatarTextures& textures, StateClien
             const float cy = ay + avatar * 0.5f;
             const float radius = avatar * 0.5f;
 
+            // The whole indicator fades with this participant's eased alpha (dim when
+            // idle, full while speaking). Multiplied by the panel-wide style Alpha.
+            const float a = g_anim[p.user_id];
+
             ImTextureID tex = resolve_avatar(p, textures, client);
             if (tex != ImTextureID_Invalid) {
                 // Circular avatar via a fully-rounded image (rounding == radius).
                 dl->AddImageRounded(tex, ImVec2(ax, ay), ImVec2(ax + avatar, ay + avatar),
-                                    ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, radius);
+                                    ImVec2(0, 0), ImVec2(1, 1), scale_alpha(IM_COL32_WHITE, a),
+                                    radius);
             } else {
                 // Neutral placeholder circle when the texture isn't available.
-                dl->AddCircleFilled(ImVec2(cx, cy), radius, IM_COL32(70, 74, 82, 255), 24);
+                dl->AddCircleFilled(ImVec2(cx, cy), radius,
+                                    scale_alpha(IM_COL32(70, 74, 82, 255), a), 24);
             }
 
-            // Speaking indicator: a bright green ring around the avatar.
+            // Speaking indicator: a bright green ring around the avatar (fades in too).
             if (p.speaking) {
                 dl->AddCircle(ImVec2(cx, cy), radius + kRing * s * 0.5f,
-                              IM_COL32(60, 230, 90, 255), 32, kRing * s);
+                              scale_alpha(IM_COL32(60, 230, 90, 255), a), 32, kRing * s);
             }
 
             // Display name, vertically centered against the avatar, with its own
@@ -194,17 +242,17 @@ void draw_voice_panel(const Snapshot& snap, AvatarTextures& textures, StateClien
             const float nbx = kNamePadX * s, nby = kNamePadY * s;
             dl->AddRectFilled(ImVec2(tx - nbx, name_y - nby),
                               ImVec2(tx + tsz.x + nbx, name_y + line_h + nby),
-                              IM_COL32(24, 26, 32, 205), kNameRound * s);
-            dl->AddText(ImVec2(tx, name_y), IM_COL32(235, 235, 240, 255), name);
+                              scale_alpha(IM_COL32(24, 26, 32, 205), a), kNameRound * s);
+            dl->AddText(ImVec2(tx, name_y), scale_alpha(IM_COL32(235, 235, 240, 255), a), name);
 
             // Mute/deaf glyphs at the right edge of the row. Deaf implies no audio at
             // all, so prefer the headphones-off glyph; otherwise show mic-off if muted.
             const float gx = pos.x + size.x - pad - radius * 0.6f;
             const float gr = radius * 0.55f;
             if (p.deaf || p.self_deaf) {
-                draw_deaf(dl, gx, cy, gr);
+                draw_deaf(dl, gx, cy, gr, a);
             } else if (p.mute || p.self_mute) {
-                draw_mic_off(dl, gx, cy, gr);
+                draw_mic_off(dl, gx, cy, gr, a);
             }
 
             cursor_y += row_h + row_gap;
@@ -292,7 +340,7 @@ void draw_overlay(const Snapshot& snap, AvatarTextures& textures, StateClient& c
     // Visibility is voice-state driven: draw NOTHING unless we are in a voice channel.
     if (!snap.in_voice) return;
 
-    draw_voice_panel(snap, textures, client, extent);
+    draw_voice_panel(snap, textures, client, extent, now_ms);
     draw_toasts(snap, extent, now_ms);
 }
 

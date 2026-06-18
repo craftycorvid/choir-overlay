@@ -155,6 +155,14 @@ fake_host = executable('fake_host',
 # build/src/layer (libchoir_overlay target above). We force the layer on via the
 # loader env vars and point VK_LAYER_PATH at that dir. vk_min_present exits 77
 # when no headless surface is available — meson treats exit 77 as SKIP.
+# Layer opacity-easing math (pure; no Vulkan/ImGui — just includes src/layer/fade.hpp).
+test('fade',
+  executable('t_fade',
+    'layer/test_fade.cpp',
+    include_directories: layer_inc,
+  ),
+)
+
 layer_dir = meson.current_build_dir() / '..' / 'src' / 'layer'
 # Point XDG_DATA_HOME at an empty dir so the loader does NOT discover a globally
 # *installed* choir implicit layer (~/.local/share/vulkan/implicit_layer.d) — which
