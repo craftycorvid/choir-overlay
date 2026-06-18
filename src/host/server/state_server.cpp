@@ -20,21 +20,21 @@ StateServer::~StateServer() {
 }
 
 bool StateServer::listen() {
-    const std::string path = runtime_socket_path();
-
-    // Clear any stale socket file left by a previous (crashed) run.
-    QLocalServer::removeServer(QString::fromStdString(path));
+    // Bind an ABSTRACT-namespace socket so the injected layer can reach us from
+    // inside Steam's pressure-vessel container (a filesystem socket under
+    // $XDG_RUNTIME_DIR is not shared into the container; the netns — and thus
+    // abstract sockets — is). Abstract sockets need no stale-file cleanup.
+    const std::string name = abstract_socket_name();
 
     server_ = new QLocalServer();
-    // Owner-only access; this is a per-user runtime socket.
-    server_->setSocketOptions(QLocalServer::UserAccessOption);
+    server_->setSocketOptions(QLocalServer::AbstractNamespaceOption);
 
     QObject::connect(server_, &QLocalServer::newConnection,
                      [this]() { on_new_connection(); });
 
-    if (!server_->listen(QString::fromStdString(path))) {
-        std::fprintf(stderr, "choir: StateServer failed to listen on %s: %s\n",
-                     path.c_str(), server_->errorString().toUtf8().constData());
+    if (!server_->listen(QString::fromStdString(name))) {
+        std::fprintf(stderr, "choir: StateServer failed to listen on @%s: %s\n",
+                     name.c_str(), server_->errorString().toUtf8().constData());
         return false;
     }
     return true;

@@ -132,10 +132,6 @@ void kill_and_reap(pid_t pid) {
     while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
 }
 
-bool file_exists(const std::string& p) {
-    struct stat st;
-    return ::stat(p.c_str(), &st) == 0;
-}
 
 const char* describe(const RunResult& r) {
     static char buf[128];
@@ -160,15 +156,18 @@ int main(int argc, char** argv) {
     char* d = ::mkdtemp(tmpl);
     if (!d) { std::fprintf(stderr, "test_layer_faults: mkdtemp failed\n"); return 2; }
     const std::string tmpdir = d;
-    const std::string socket = tmpdir + "/choir.sock";
     const std::string cache = tmpdir + "/avatars";
     ::mkdir(cache.c_str(), 0700);
+
+    // Unique abstract socket name; fake_host (inherits env) and the layer inside
+    // vk_min_present (inherits env) both read $CHOIR_SOCKET.
+    const std::string sockname = "choir-test-lf-" + std::to_string(::getpid());
+    ::setenv("CHOIR_SOCKET", sockname.c_str(), 1);
 
     const std::vector<std::string> layer_env = {
         "VK_LAYER_PATH=" + layer_dir,
         "VK_INSTANCE_LAYERS=VK_LAYER_choir_overlay_x86_64",
         "VK_LOADER_LAYERS_ENABLE=VK_LAYER_choir_overlay_x86_64",
-        "XDG_RUNTIME_DIR=" + tmpdir,
         "DISABLE_CHOIR_OVERLAY=",  // ensure not disabled
     };
 
@@ -184,7 +183,7 @@ int main(int argc, char** argv) {
                         bool kill_host_early = false) {
         pid_t host = -1;
         if (!host_args.empty()) {
-            std::vector<std::string> args = {"--socket", socket, "--cache-dir", cache};
+            std::vector<std::string> args = {"--cache-dir", cache};
             args.insert(args.end(), host_args.begin(), host_args.end());
             host = spawn_fake_host(fake_host.c_str(), args);
             if (host < 0) {
@@ -192,8 +191,8 @@ int main(int argc, char** argv) {
                 rc = 1;
                 return;
             }
-            for (int i = 0; i < 100 && !file_exists(socket); ++i)
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            // Abstract socket has no file to poll; wait a fixed short interval.
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
         }
 
         std::vector<std::string> env = layer_env;
@@ -238,7 +237,7 @@ int main(int argc, char** argv) {
     // the layer must NOT allocate any overlay Vulkan/ImGui state — so the
     // CHOIR_DEBUG_LAZY_INIT log line must NEVER appear. We capture vk_min_present's
     // stderr to a file and grep it.
-    ::unlink(socket.c_str());  // make sure no host socket exists
+    // (No host running for this case; abstract socket released when fake_host exits.)
     {
         const std::string log = tmpdir + "/lazy.log";
         // Redirect the child's stderr to `log` via a wrapper: fork, dup2, exec.

@@ -139,8 +139,11 @@ static bool backoff_sleep(int wake_r, std::atomic<bool>& stop, int ms) {
 }
 
 int StateClient::connect_once() {
-    const std::string path = runtime_socket_path();
-    if (path.empty() || path.size() >= sizeof(sockaddr_un::sun_path)) return -1;
+    // Abstract-namespace socket: reachable on the host AND from inside Steam's
+    // pressure-vessel container (shared netns), unlike a filesystem socket.
+    sockaddr_un addr{};
+    socklen_t addrlen = make_abstract_addr(addr, abstract_socket_name());
+    if (addrlen == 0) return -1;
 
     int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) return -1;
@@ -149,11 +152,7 @@ int StateClient::connect_once() {
         return -1;
     }
 
-    sockaddr_un addr{};
-    addr.sun_family = AF_UNIX;
-    std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
-
-    int rc = ::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+    int rc = ::connect(fd, reinterpret_cast<sockaddr*>(&addr), addrlen);
     if (rc == 0) return fd;  // immediate connect (AF_UNIX usually does)
 
     if (errno == EINPROGRESS) {

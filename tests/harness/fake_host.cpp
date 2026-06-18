@@ -61,7 +61,7 @@ constexpr TestAvatar kAvatars[] = {
 // Runtime config (parsed from argv). The fault-injection knobs default off so the
 // existing golden/state tests keep their well-behaved fake host.
 struct Config {
-    std::string socket_path;
+    std::string name;  // abstract socket name
     std::string cache_dir;
     bool once = false;
     bool corrupt_avatars = false;
@@ -187,18 +187,18 @@ void serve_client(int cfd, const Config& cfg) {
 
 int main(int argc, char** argv) {
     Config cfg;
-    cfg.socket_path = choir::runtime_socket_path();
+    cfg.name = choir::abstract_socket_name();
     cfg.cache_dir = choir::avatar_cache_dir();
 
     for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--socket") == 0 && i + 1 < argc) cfg.socket_path = argv[++i];
+        if (std::strcmp(argv[i], "--name") == 0 && i + 1 < argc) cfg.name = argv[++i];
         else if (std::strcmp(argv[i], "--cache-dir") == 0 && i + 1 < argc) cfg.cache_dir = argv[++i];
         else if (std::strcmp(argv[i], "--once") == 0) cfg.once = true;
         else if (std::strcmp(argv[i], "--corrupt-avatars") == 0) cfg.corrupt_avatars = true;
         else if (std::strcmp(argv[i], "--corrupt-snapshot") == 0) cfg.corrupt_snapshot = true;
         else if (std::strcmp(argv[i], "--flap") == 0 && i + 1 < argc) cfg.flap = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--help") == 0) {
-            std::puts("fake_host [--socket PATH] [--cache-dir DIR] [--once] "
+            std::puts("fake_host [--name ABSTRACT_NAME] [--cache-dir DIR] [--once] "
                       "[--corrupt-avatars] [--corrupt-snapshot] [--flap N]");
             return 0;
         }
@@ -215,24 +215,19 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (cfg.socket_path.size() >= sizeof(sockaddr_un::sun_path)) {
-        std::fprintf(stderr, "fake_host: socket path too long\n");
-        return 1;
-    }
-    ::unlink(cfg.socket_path.c_str());
+    // Abstract-namespace socket (matches the host StateServer + the layer client).
+    sockaddr_un addr{};
+    socklen_t addrlen = choir::make_abstract_addr(addr, cfg.name);
+    if (addrlen == 0) { std::fprintf(stderr, "fake_host: socket name too long\n"); return 1; }
 
     int sfd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (sfd < 0) { std::perror("socket"); return 1; }
-
-    sockaddr_un addr{};
-    addr.sun_family = AF_UNIX;
-    std::strncpy(addr.sun_path, cfg.socket_path.c_str(), sizeof(addr.sun_path) - 1);
-    if (::bind(sfd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+    if (::bind(sfd, reinterpret_cast<sockaddr*>(&addr), addrlen) < 0) {
         std::perror("bind"); ::close(sfd); return 1;
     }
     if (::listen(sfd, 8) < 0) { std::perror("listen"); ::close(sfd); return 1; }
 
-    std::printf("fake_host: listening on %s (cache %s)%s%s%s\n", cfg.socket_path.c_str(),
+    std::printf("fake_host: listening on @%s (cache %s)%s%s%s\n", cfg.name.c_str(),
                 cfg.cache_dir.c_str(),
                 cfg.corrupt_avatars ? " [corrupt-avatars]" : "",
                 cfg.corrupt_snapshot ? " [corrupt-snapshot]" : "",
@@ -247,7 +242,6 @@ int main(int argc, char** argv) {
         if (cfg.once) break;
     }
 
-    ::close(sfd);
-    ::unlink(cfg.socket_path.c_str());
+    ::close(sfd);  // abstract socket: auto-released on close, no file to unlink
     return 0;
 }

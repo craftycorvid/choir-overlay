@@ -156,6 +156,11 @@ fake_host = executable('fake_host',
 # loader env vars and point VK_LAYER_PATH at that dir. vk_min_present exits 77
 # when no headless surface is available — meson treats exit 77 as SKIP.
 layer_dir = meson.current_build_dir() / '..' / 'src' / 'layer'
+# Point XDG_DATA_HOME at an empty dir so the loader does NOT discover a globally
+# *installed* choir implicit layer (~/.local/share/vulkan/implicit_layer.d) — which
+# would shadow (dedup by name) the build-tree layer we load via VK_LAYER_PATH and
+# make these tests depend on whatever is installed. Only the build layer must load.
+xdg_isolate = meson.current_build_dir() / 'test-xdg-isolate'
 test('layer_loads',
   vk_min_present,
   args: ['--frames', '2', '--layer-info'],
@@ -164,6 +169,7 @@ test('layer_loads',
     'VK_LAYER_PATH': layer_dir,
     'VK_INSTANCE_LAYERS': 'VK_LAYER_choir_overlay_x86_64',
     'VK_LOADER_LAYERS_ENABLE': 'VK_LAYER_choir_overlay_x86_64',
+    'XDG_DATA_HOME': xdg_isolate,
   },
 )
 
@@ -183,6 +189,7 @@ test('layer_golden',
   args: [vk_min_present.full_path(), fake_host.full_path(), layer_dir,
          meson.current_build_dir() / 'layer_golden.ppm'],
   depends: [libchoir_overlay, vk_min_present, fake_host],
+  env: {'XDG_DATA_HOME': xdg_isolate},
 )
 
 # Task 16: state-client + avatar-texture integration. The driver starts fake_host on
@@ -199,6 +206,7 @@ test('layer_state',
   ),
   args: [vk_min_present.full_path(), fake_host.full_path(), layer_dir],
   depends: [libchoir_overlay, vk_min_present, fake_host],
+  env: {'XDG_DATA_HOME': xdg_isolate},
 )
 
 # Task 18: fault-injection / failure-isolation test. The driver runs vk_min_present with
@@ -216,4 +224,5 @@ test('layer_faults',
   args: [vk_min_present.full_path(), fake_host.full_path(), layer_dir],
   depends: [libchoir_overlay, vk_min_present, fake_host],
   timeout: 240,
+  env: {'XDG_DATA_HOME': xdg_isolate},
 )

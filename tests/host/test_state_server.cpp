@@ -41,14 +41,16 @@ using namespace choir;
 
 namespace {
 
-// Connect a raw AF_UNIX/SOCK_STREAM client to `path`. Returns the fd or -1.
-int raw_connect(const std::string& path) {
+// Connect a raw AF_UNIX/SOCK_STREAM client to the abstract socket `name`. Returns
+// the fd or -1. (Also validates that a raw POSIX client interoperates with the
+// host's Qt QLocalServer AbstractNamespaceOption socket.)
+int raw_connect(const std::string& name) {
     int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) return -1;
     sockaddr_un addr{};
-    addr.sun_family = AF_UNIX;
-    std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
-    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+    socklen_t addrlen = make_abstract_addr(addr, name);
+    if (addrlen == 0) { ::close(fd); return -1; }
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), addrlen) != 0) {
         ::close(fd);
         return -1;
     }
@@ -105,8 +107,11 @@ int main(int argc, char** argv) {
     char* dir = ::mkdtemp(tmpl);
     assert(dir != nullptr);
     ::setenv("XDG_RUNTIME_DIR", dir, 1);
+    // Unique abstract socket name so parallel tests don't collide on it.
+    const std::string sockname = "choir-test-ss-" + std::to_string(::getpid());
+    ::setenv("CHOIR_SOCKET", sockname.c_str(), 1);
 
-    const std::string sock = runtime_socket_path();
+    const std::string sock = abstract_socket_name();
 
     Denylist denylist({"steam", "discord"});
     StateServer server([&denylist](const std::string& exe) { return denylist.blocks(exe); });

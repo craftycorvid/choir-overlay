@@ -62,13 +62,13 @@ int run_child(const char* path, const char* const argv[],
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
-// Spawn fake_host in the background; returns its pid (or -1).
-pid_t spawn_fake_host(const char* path, const std::string& socket, const std::string& cache) {
+// Spawn fake_host in the background; returns its pid (or -1). fake_host binds the
+// abstract socket named by $CHOIR_SOCKET (inherited from our environment).
+pid_t spawn_fake_host(const char* path, const std::string& cache) {
     pid_t pid = ::fork();
     if (pid < 0) return -1;
     if (pid == 0) {
-        const char* argv[] = {path, "--socket", socket.c_str(),
-                              "--cache-dir", cache.c_str(), nullptr};
+        const char* argv[] = {path, "--cache-dir", cache.c_str(), nullptr};
         ::execv(path, const_cast<char* const*>(argv));
         ::_exit(127);
     }
@@ -119,18 +119,23 @@ int main(int argc, char** argv) {
         return 2;
     }
     g_tmpdir = d;
-    const std::string socket = g_tmpdir + "/choir.sock";
     const std::string cache = g_tmpdir + "/avatars";
     const std::string dump = g_tmpdir + "/snap.json";
     ::mkdir(cache.c_str(), 0700);
 
-    // Common loader env so vk_min_present loads our layer. XDG_RUNTIME_DIR drives
-    // choir::runtime_socket_path() in BOTH the layer (client) and fake_host.
+    // Abstract socket name, unique per test run. Both fake_host (inherits our env)
+    // and the layer inside vk_min_present read it from $CHOIR_SOCKET. (Abstract
+    // sockets live in the netns, not the filesystem — no path needed.)
+    const std::string sockname = "choir-test-ls-" + std::to_string(::getpid());
+    ::setenv("CHOIR_SOCKET", sockname.c_str(), 1);
+
+    // Common loader env so vk_min_present loads our layer. CHOIR_SOCKET is inherited
+    // from our environment (set above), so the layer connects to the same abstract
+    // socket fake_host binds.
     const std::vector<std::string> layer_env = {
         "VK_LAYER_PATH=" + layer_dir,
         "VK_INSTANCE_LAYERS=VK_LAYER_choir_overlay_x86_64",
         "VK_LOADER_LAYERS_ENABLE=VK_LAYER_choir_overlay_x86_64",
-        "XDG_RUNTIME_DIR=" + g_tmpdir,
     };
 
     int rc = 0;
@@ -138,15 +143,15 @@ int main(int argc, char** argv) {
     // =========================================================================
     // Phase 1: with fake_host running, the layer must receive the snapshot.
     // =========================================================================
-    pid_t host = spawn_fake_host(fake_host.c_str(), socket, cache);
+    pid_t host = spawn_fake_host(fake_host.c_str(), cache);
     if (host < 0) {
         std::fprintf(stderr, "test_layer_state: failed to spawn fake_host\n");
         return 2;
     }
     // Give fake_host a moment to bind + listen before the layer connects. The layer
     // also retries with backoff, so this is just to avoid the first reconnect wait.
-    for (int i = 0; i < 50 && !file_exists(socket); ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    // (Abstract socket has no file to poll, so wait a fixed short interval.)
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
     {
         // A few frames so the client thread has time to connect, Hello, and deliver
@@ -208,12 +213,12 @@ int main(int argc, char** argv) {
     }
 
     // =========================================================================
-    // Phase 2: WITHOUT a host (socket removed). The layer must draw nothing and
-    // vk_min_present must still exit 0 (no crash, no hang on shutdown).
+    // Phase 2: WITHOUT a host (fake_host already killed above; abstract socket is
+    // released on its exit). The layer must draw nothing and vk_min_present must
+    // still exit 0 (no crash, no hang on shutdown).
     // =========================================================================
-    ::unlink(socket.c_str());
     {
-        std::vector<std::string> env = layer_env;  // same XDG_RUNTIME_DIR, no host
+        std::vector<std::string> env = layer_env;  // no host
         const char* a[] = {vk_app.c_str(), "--frames", "5", nullptr};
         int code = run_child(vk_app.c_str(), a, env);
         if (code == 77) {
