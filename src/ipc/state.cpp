@@ -11,10 +11,10 @@ void to_json(json& j, const Anchor& a) {
     j = static_cast<uint8_t>(a);
 }
 void from_json(const json& j, Anchor& a) {
-    // Untrusted input: clamp to the valid range 0..3 so an out-of-range integer
-    // can't yield an undefined enum value the renderer would have to handle.
+    // Untrusted input: clamp to the valid range so an out-of-range integer can't
+    // yield an undefined enum value the renderer would have to handle.
     const uint8_t v = j.get<uint8_t>();
-    a = (v <= static_cast<uint8_t>(Anchor::BottomRight))
+    a = (v <= static_cast<uint8_t>(Anchor::CenterRight))
             ? static_cast<Anchor>(v)
             : Anchor::TopRight; // default
 }

@@ -30,7 +30,10 @@ constexpr float kAvatarTextGap = 10.0f;
 constexpr float kPanelWidth = 220.0f;  // fixed panel width (name truncates if longer)
 constexpr float kRowHeight = kAvatar;  // a row is as tall as its avatar
 constexpr float kRing = 2.5f;          // speaking-ring thickness
-constexpr float kRound = 8.0f;         // panel background corner rounding
+constexpr float kRound = 8.0f;         // toast background corner rounding
+constexpr float kNamePadX = 6.0f;      // per-name background "pill" horizontal padding
+constexpr float kNamePadY = 2.0f;      // per-name background "pill" vertical padding
+constexpr float kNameRound = 5.0f;     // per-name background corner rounding
 
 constexpr float kToastWidth = 240.0f;
 constexpr float kToastPad = 10.0f;
@@ -49,16 +52,20 @@ constexpr ImGuiWindowFlags kOverlayWindowFlags =
     ImGuiWindowFlags_NoBringToFrontOnFocus;
 
 bool is_top(Anchor a) { return a == Anchor::TopLeft || a == Anchor::TopRight; }
-bool is_left(Anchor a) { return a == Anchor::TopLeft || a == Anchor::BottomLeft; }
+bool is_left(Anchor a) {
+    return a == Anchor::TopLeft || a == Anchor::BottomLeft || a == Anchor::CenterLeft;
+}
+bool is_center(Anchor a) { return a == Anchor::CenterLeft || a == Anchor::CenterRight; }
 
 // Compute the top-left position of a panel of `size` for `anchor` within `extent`,
 // inset by a scaled margin. The window pivot is its top-left, so we subtract size on
-// the right/bottom anchors.
+// the right/bottom anchors. Center anchors hug the left/right edge, vertically centered.
 ImVec2 anchored_pos(Anchor anchor, VkExtent2D extent, ImVec2 size, float margin) {
     const float W = static_cast<float>(extent.width);
     const float H = static_cast<float>(extent.height);
     float x = is_left(anchor) ? margin : (W - margin - size.x);
-    float y = is_top(anchor) ? margin : (H - margin - size.y);
+    float y = is_center(anchor) ? (H - size.y) * 0.5f
+                                : (is_top(anchor) ? margin : (H - margin - size.y));
     if (x < 0.0f) x = 0.0f;
     if (y < 0.0f) y = 0.0f;
     return ImVec2(x, y);
@@ -133,12 +140,11 @@ void draw_voice_panel(const Snapshot& snap, AvatarTextures& textures, StateClien
     const float row_gap = kRowGap * s;
     const float width = kPanelWidth * s;
 
-    // A header line shows the channel name; rows stack below it.
+    // Participant rows stack from the top (no channel header).
     const float line_h = ImGui::GetTextLineHeight();
-    const float header_h = snap.channel_name.empty() ? 0.0f : (line_h + row_gap);
     const float rows_h =
         rows.size() * row_h + (rows.size() > 1 ? (rows.size() - 1) * row_gap : 0.0f);
-    const ImVec2 size(width, pad * 2.0f + header_h + rows_h);
+    const ImVec2 size(width, pad * 2.0f + rows_h);
 
     const ImVec2 pos = anchored_pos(cfg.anchor, extent, size, kMargin * s);
 
@@ -150,20 +156,10 @@ void draw_voice_panel(const Snapshot& snap, AvatarTextures& textures, StateClien
     if (ImGui::Begin("##choir_voice_panel", nullptr, kOverlayWindowFlags)) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
 
-        // Our own translucent rounded background (NoBackground window). Alpha here is
-        // pre-PushStyleVar; the style-var Alpha multiplies vertex colors so the effective
-        // opacity is bg_alpha * cfg.opacity.
-        dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y),
-                          IM_COL32(20, 22, 28, 220), kRound * s);
-
+        // No panel background and no channel header: the panel is fully transparent and
+        // each participant's NAME gets its own translucent "pill" background instead.
         float cursor_y = pos.y + pad;
         const float left = pos.x + pad;
-
-        if (!snap.channel_name.empty()) {
-            dl->AddText(ImVec2(left, cursor_y), IM_COL32(150, 200, 255, 255),
-                        snap.channel_name.c_str());
-            cursor_y += line_h + row_gap;
-        }
 
         for (const Participant* pp : rows) {
             const Participant& p = *pp;
@@ -189,11 +185,17 @@ void draw_voice_panel(const Snapshot& snap, AvatarTextures& textures, StateClien
                               IM_COL32(60, 230, 90, 255), 32, kRing * s);
             }
 
-            // Display name, vertically centered against the avatar.
+            // Display name, vertically centered against the avatar, with its own
+            // translucent rounded "pill" background behind just the text.
             const char* name = p.display_name.c_str();
+            const float tx = ax + avatar + kAvatarTextGap * s;
             const float name_y = cy - line_h * 0.5f;
-            dl->AddText(ImVec2(ax + avatar + kAvatarTextGap * s, name_y),
-                        IM_COL32(235, 235, 240, 255), name);
+            const ImVec2 tsz = ImGui::CalcTextSize(name);
+            const float nbx = kNamePadX * s, nby = kNamePadY * s;
+            dl->AddRectFilled(ImVec2(tx - nbx, name_y - nby),
+                              ImVec2(tx + tsz.x + nbx, name_y + line_h + nby),
+                              IM_COL32(24, 26, 32, 205), kNameRound * s);
+            dl->AddText(ImVec2(tx, name_y), IM_COL32(235, 235, 240, 255), name);
 
             // Mute/deaf glyphs at the right edge of the row. Deaf implies no audio at
             // all, so prefer the headphones-off glyph; otherwise show mic-off if muted.

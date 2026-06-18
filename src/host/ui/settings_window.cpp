@@ -23,15 +23,19 @@ namespace {
 
 int anchor_to_index(Anchor a) { return static_cast<int>(a); }
 Anchor index_to_anchor(int i) {
-    if (i < 0 || i > 3) i = static_cast<int>(Anchor::TopRight);
+    if (i < 0 || i > static_cast<int>(Anchor::CenterRight)) i = static_cast<int>(Anchor::TopRight);
     return static_cast<Anchor>(i);
 }
 
+// Order MUST match the Anchor enum (TopLeft, TopRight, BottomLeft, BottomRight,
+// CenterLeft, CenterRight).
 void fill_anchor_combo(QComboBox* c) {
     c->addItem(QStringLiteral("Top Left"));
     c->addItem(QStringLiteral("Top Right"));
     c->addItem(QStringLiteral("Bottom Left"));
     c->addItem(QStringLiteral("Bottom Right"));
+    c->addItem(QStringLiteral("Center Left"));
+    c->addItem(QStringLiteral("Center Right"));
 }
 
 }  // namespace

@@ -112,12 +112,12 @@ int run_child(const char* path, const char* const argv[],
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
-pid_t spawn_fake_host(const char* path, const std::string& socket, const std::string& cache) {
+pid_t spawn_fake_host(const char* path, const std::string& cache) {
     pid_t pid = ::fork();
     if (pid < 0) return -1;
     if (pid == 0) {
-        const char* argv[] = {path, "--socket", socket.c_str(),
-                              "--cache-dir", cache.c_str(), nullptr};
+        // fake_host binds the abstract socket named by $CHOIR_SOCKET (inherited).
+        const char* argv[] = {path, "--cache-dir", cache.c_str(), nullptr};
         ::execv(path, const_cast<char* const*>(argv));
         ::_exit(127);
     }
@@ -137,10 +137,6 @@ void kill_and_reap(pid_t pid) {
     while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
 }
 
-bool file_exists(const std::string& p) {
-    struct stat st;
-    return ::stat(p.c_str(), &st) == 0;
-}
 
 }  // namespace
 
@@ -159,15 +155,19 @@ int main(int argc, char** argv) {
     char* d = ::mkdtemp(tmpl);
     if (!d) { std::fprintf(stderr, "golden: mkdtemp failed\n"); return 2; }
     g_tmpdir = d;
-    const std::string socket = g_tmpdir + "/choir.sock";
     const std::string cache = g_tmpdir + "/avatars";
     ::mkdir(cache.c_str(), 0700);
+
+    // Unique abstract socket name; fake_host and the layer (both inherit our env) read
+    // $CHOIR_SOCKET. The meson test env sets a clean XDG_DATA_HOME so the installed
+    // implicit layer doesn't shadow the build layer.
+    const std::string sockname = "choir-test-golden-" + std::to_string(::getpid());
+    ::setenv("CHOIR_SOCKET", sockname.c_str(), 1);
 
     const std::vector<std::string> layer_env = {
         "VK_LAYER_PATH=" + layer_dir,
         "VK_INSTANCE_LAYERS=VK_LAYER_choir_overlay_x86_64",
         "VK_LOADER_LAYERS_ENABLE=VK_LAYER_choir_overlay_x86_64",
-        "XDG_RUNTIME_DIR=" + g_tmpdir,
         "DISABLE_CHOIR_OVERLAY=",  // ensure not disabled by a stale env flag
     };
 
@@ -190,10 +190,9 @@ int main(int argc, char** argv) {
     // =========================================================================
     // Phase 1: IN VOICE — the panel + three avatars + speaking ring + mute glyph.
     // =========================================================================
-    pid_t host = spawn_fake_host(fake_host.c_str(), socket, cache);
+    pid_t host = spawn_fake_host(fake_host.c_str(), cache);
     if (host < 0) { std::fprintf(stderr, "golden: failed to spawn fake_host\n"); return 2; }
-    for (int i = 0; i < 50 && !file_exists(socket); ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));  // let fake_host bind
 
     uint32_t w = 0, h = 0;
     std::vector<uint8_t> rgb;
@@ -240,16 +239,16 @@ int main(int argc, char** argv) {
     check(any_pixel(rgb, w, h, px0, py0, px1, py1, is_green), "no GREEN avatar pixel in panel");
     check(any_pixel(rgb, w, h, px0, py0, px1, py1, is_blue), "no BLUE avatar pixel in panel");
 
-    // Bob (green) is speaking: a green ring sits JUST OUTSIDE his avatar. His avatar's
-    // left solid edge is ~x31; the ring extends to ~x28. Look for a green pixel in the
-    // narrow band x[26..30] in Bob's row band (y ~85..120) — i.e. green where the solid
-    // avatar isn't (the speaking-indicator path ran).
-    check(any_pixel(rgb, w, h, 26, 84, 31, 121, is_green),
+    // Bob (green) is the only speaker: his green ring sits just left of his avatar's solid
+    // edge (~x28). Scan the narrow band x[26..31) over the full panel height (robust to the
+    // exact row offset now that there's no channel header) — any green there is his ring.
+    check(any_pixel(rgb, w, h, 26, py0, 31, py1, is_green),
           "no green speaking-ring pixel outside Bob's avatar");
 
-    // Carol (blue, self_mute): a red mute-glyph slash sits at the right edge of her row
-    // (x ~210..235, y ~130..160).
-    check(any_pixel(rgb, w, h, 208, 128, 240, 162, is_red),
+    // Carol (blue, self_mute) is the only muted user: her red mute-glyph slash sits at the
+    // panel's right edge. Scan x[208..240) over the full panel height — the only red at the
+    // right edge is her glyph (avatars are at the left).
+    check(any_pixel(rgb, w, h, 208, py0, 240, py1, is_red),
           "no red mute glyph in Carol's row");
 
     // A far/empty corner (bottom-left) stays the app blue.
@@ -287,7 +286,7 @@ int main(int argc, char** argv) {
     // =========================================================================
     // Phase 3: NO HOST — overlay draws nothing; the whole frame stays app blue.
     // =========================================================================
-    ::unlink(socket.c_str());
+    // (host killed above; its abstract socket is released on exit — no file to unlink)
     {
         uint32_t nw = 0, nh = 0;
         std::vector<uint8_t> nrgb;

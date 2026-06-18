@@ -7,7 +7,8 @@
 
 namespace choir {
 
-enum class Anchor : uint8_t { TopLeft, TopRight, BottomLeft, BottomRight };
+// CenterLeft/CenterRight hug the left/right edge, vertically centered.
+enum class Anchor : uint8_t { TopLeft, TopRight, BottomLeft, BottomRight, CenterLeft, CenterRight };
 
 struct Participant {
     std::string user_id;        // Discord snowflake (string)
