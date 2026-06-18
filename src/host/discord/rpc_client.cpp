@@ -128,6 +128,10 @@ void RpcClient::on_message(int op, const json& j) {
         handle_authenticate_response(j);
         return;
     }
+    if (cmd == "GET_SELECTED_VOICE_CHANNEL") {
+        handle_selected_voice_channel(j);
+        return;
+    }
     if (cmd == "DISPATCH") {
         const std::string evt = str_or(j, "evt");
 
@@ -197,6 +201,39 @@ void RpcClient::handle_authenticate_response(const json& frame) {
     set_state(ConnectionState::Ready);
     transport_.send(kOpFrame, build_subscribe("VOICE_CHANNEL_SELECT", json::object()));
     transport_.send(kOpFrame, build_subscribe("NOTIFICATION_CREATE", json::object()));
+    // Ask whether we're ALREADY in a voice channel. VOICE_CHANNEL_SELECT only fires
+    // on a fresh join/switch, so without this query an already-joined channel stays
+    // invisible until the user leaves and re-joins.
+    transport_.send(kOpFrame, build_get_selected_voice_channel());
+}
+
+void RpcClient::handle_selected_voice_channel(const json& frame) {
+    // Only meaningful once authenticated; ignore stale/duplicate replies.
+    if (state_ != ConnectionState::Ready && state_ != ConnectionState::InChannel) return;
+
+    SelectedChannel sel = parse_selected_voice_channel(frame);
+    if (!sel.in_channel) return;            // not in a channel — nothing to seed
+    if (sel.channel_id == subscribed_channel_) return;  // already handled via an event
+
+    // Drive the same path a VOICE_CHANNEL_SELECT event would: tell the overlay state
+    // we're in this channel (sets in_voice, clears the roster), subscribe to the
+    // channel-scoped events, then seed the participants already present (a fresh
+    // subscription does not replay them).
+    if (on_event_) {
+        RpcEvent cs;
+        cs.kind = RpcEvent::ChannelSelect;
+        cs.channel_id = sel.channel_id;
+        on_event_(cs);
+    }
+    handle_channel_select(sel.channel_id);
+    if (on_event_) {
+        for (const VoiceState& v : sel.states) {
+            RpcEvent ev;
+            ev.kind = RpcEvent::VoiceCreate;
+            ev.voice = v;
+            on_event_(ev);
+        }
+    }
 }
 
 void RpcClient::handle_channel_select(const std::string& channel_id) {

@@ -153,6 +153,33 @@ nlohmann::json build_unsubscribe(const std::string& evt, const nlohmann::json& a
     };
 }
 
+nlohmann::json build_get_selected_voice_channel() {
+    return json{
+        {"cmd", "GET_SELECTED_VOICE_CHANNEL"},
+        {"args", json::object()},
+        {"nonce", next_nonce()},
+    };
+}
+
+SelectedChannel parse_selected_voice_channel(const nlohmann::json& frame) {
+    SelectedChannel out;
+    if (!frame.is_object()) return out;
+    const json& data = obj_or_empty(frame, "data");  // "data":null => empty object
+    const std::string id = str_or(data, "id");
+    if (id.empty()) return out;  // not in a channel (data was null / had no id)
+
+    out.in_channel = true;
+    out.channel_id = id;
+    auto it = data.find("voice_states");
+    if (it != data.end() && it->is_array()) {
+        for (const json& vs : *it) {
+            // Each voice_states[] element is shaped like a VOICE_STATE_CREATE payload.
+            out.states.push_back(parse_voice(RpcEvent::VoiceCreate, vs).voice);
+        }
+    }
+    return out;
+}
+
 std::optional<RpcEvent> parse_event(const nlohmann::json& frame) {
     if (!frame.is_object()) return std::nullopt;
     if (str_or(frame, "cmd") != "DISPATCH") return std::nullopt;

@@ -73,11 +73,28 @@ nlohmann::json build_subscribe(const std::string& evt, const nlohmann::json& arg
 // the previous channel's voice/speaking subscriptions on a channel switch.
 nlohmann::json build_unsubscribe(const std::string& evt, const nlohmann::json& args);
 
-// --- Parser ----------------------------------------------------------------
+// {"cmd":"GET_SELECTED_VOICE_CHANNEL","args":{},"nonce":...}
+// Queries the voice channel the user is CURRENTLY in. Sent once on connect so an
+// already-joined channel is detected without waiting for a VOICE_CHANNEL_SELECT
+// event (which only fires on a fresh join/switch).
+nlohmann::json build_get_selected_voice_channel();
+
+// --- Parsers ---------------------------------------------------------------
 
 // Parse an inbound DISPATCH frame ({"cmd":"DISPATCH","evt":...,"data":{...}}).
 // Returns std::nullopt for non-DISPATCH frames, unknown events, or anything
 // malformed. Never throws.
 std::optional<RpcEvent> parse_event(const nlohmann::json& frame);
+
+// Result of a GET_SELECTED_VOICE_CHANNEL reply.
+struct SelectedChannel {
+    bool in_channel = false;          // false => not currently in a voice channel
+    std::string channel_id;
+    std::vector<VoiceState> states;   // existing participants (no speaking info yet)
+};
+
+// Parse a GET_SELECTED_VOICE_CHANNEL reply ({"cmd":...,"data":{id,name,voice_states}}
+// or "data":null). Never throws; returns {in_channel=false} for null/garbage.
+SelectedChannel parse_selected_voice_channel(const nlohmann::json& frame);
 
 } // namespace choir

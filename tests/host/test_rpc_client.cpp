@@ -180,14 +180,27 @@ void test_full_handshake_to_in_channel(int lfd) {
         if (authn.contains("nonce")) authn_reply["nonce"] = authn.at("nonce");
         assert(write_frame(cfd, 1, authn_reply.dump()));
 
-        // 5. Expect the two top-level SUBSCRIBEs (order not guaranteed; read two).
-        for (int i = 0; i < 2; ++i) {
+        // 5. Expect the two top-level SUBSCRIBEs + the on-connect
+        //    GET_SELECTED_VOICE_CHANNEL query (order not guaranteed; read three).
+        //    Reply data:null (NOT already in a channel) so this test exercises the
+        //    event-driven join path below.
+        std::string get_nonce;
+        for (int i = 0; i < 3; ++i) {
             assert(read_frame(cfd, op, payload));
-            json sub = json::parse(payload);
-            assert(sub.at("cmd") == "SUBSCRIBE");
-            std::string evt = sub.at("evt");
-            if (evt == "VOICE_CHANNEL_SELECT") saw_sub_voice_channel_select = true;
-            else if (evt == "NOTIFICATION_CREATE") saw_sub_notification_create = true;
+            json m = json::parse(payload);
+            const std::string c = m.value("cmd", std::string());
+            if (c == "SUBSCRIBE") {
+                std::string evt = m.at("evt");
+                if (evt == "VOICE_CHANNEL_SELECT") saw_sub_voice_channel_select = true;
+                else if (evt == "NOTIFICATION_CREATE") saw_sub_notification_create = true;
+            } else if (c == "GET_SELECTED_VOICE_CHANNEL") {
+                get_nonce = m.value("nonce", std::string());
+            }
+        }
+        {
+            json get_reply = {{"cmd", "GET_SELECTED_VOICE_CHANNEL"}, {"data", nullptr}};
+            if (!get_nonce.empty()) get_reply["nonce"] = get_nonce;
+            assert(write_frame(cfd, 1, get_reply.dump()));
         }
 
         // 6. Push a VOICE_CHANNEL_SELECT for channel "123".
@@ -283,6 +296,119 @@ void test_full_handshake_to_in_channel(int lfd) {
 
     assert(client.state() == ConnectionState::InChannel);
     assert(last_state == ConnectionState::InChannel);
+
+    client.stop();
+    mock.join();
+    assert(mock_done);
+}
+
+// ---- Already-in-channel-on-connect test -----------------------------------
+//
+// If the user is ALREADY in a voice channel when the client connects, no
+// VOICE_CHANNEL_SELECT event fires. The client must instead learn the current
+// channel from its GET_SELECTED_VOICE_CHANNEL query and seed the existing
+// participants from the reply's voice_states (a fresh subscription won't replay
+// them). Reaching InChannel + emitting ChannelSelect + VoiceCreate proves it.
+
+void test_already_in_channel_on_connect(int lfd) {
+    std::atomic<bool> mock_done{false};
+
+    std::thread mock([&] {
+        int cfd = ::accept(lfd, nullptr, nullptr);
+        assert(cfd >= 0);
+
+        int32_t op;
+        std::string payload;
+        assert(read_frame(cfd, op, payload));  // HANDSHAKE
+        assert(op == 0);
+
+        json ready = {{"cmd", "DISPATCH"}, {"evt", "READY"}, {"data", json::object()}};
+        assert(write_frame(cfd, 1, ready.dump()));
+
+        assert(read_frame(cfd, op, payload));  // AUTHORIZE
+        json a = json::parse(payload);
+        assert(a.at("cmd") == "AUTHORIZE");
+        json ar = {{"cmd", "AUTHORIZE"}, {"data", {{"code", "C"}}}};
+        if (a.contains("nonce")) ar["nonce"] = a.at("nonce");
+        assert(write_frame(cfd, 1, ar.dump()));
+
+        assert(read_frame(cfd, op, payload));  // AUTHENTICATE
+        json an = json::parse(payload);
+        assert(an.at("cmd") == "AUTHENTICATE");
+        json anr = {{"cmd", "AUTHENTICATE"}, {"data", json::object()}};
+        if (an.contains("nonce")) anr["nonce"] = an.at("nonce");
+        assert(write_frame(cfd, 1, anr.dump()));
+
+        // Read the two top-level SUBSCRIBEs + the GET query; reply to GET with a
+        // channel that ALREADY has a participant (u9, self_mute).
+        std::string get_nonce;
+        for (int i = 0; i < 3; ++i) {
+            assert(read_frame(cfd, op, payload));
+            json m = json::parse(payload);
+            if (m.value("cmd", std::string()) == "GET_SELECTED_VOICE_CHANNEL")
+                get_nonce = m.value("nonce", std::string());
+        }
+        json chan = {
+            {"cmd", "GET_SELECTED_VOICE_CHANNEL"},
+            {"data", {
+                {"id", "123"}, {"name", "General"},
+                {"voice_states", json::array({
+                    json{{"user", {{"id", "u9"}, {"username", "Alice"}, {"avatar", "ah"}}},
+                         {"nick", "Ali"},
+                         {"voice_state", {{"mute", false}, {"deaf", false},
+                                          {"self_mute", true}, {"self_deaf", false}}}},
+                })},
+            }},
+        };
+        if (!get_nonce.empty()) chan["nonce"] = get_nonce;
+        assert(write_frame(cfd, 1, chan.dump()));
+
+        // The FSM should now subscribe to the channel-scoped events for "123".
+        bool saw_channel_sub = false;
+        for (int i = 0; i < 5; ++i) {
+            assert(read_frame(cfd, op, payload));
+            json sub = json::parse(payload);
+            if (sub.value("cmd", std::string()) == "SUBSCRIBE" &&
+                sub.value("evt", std::string()) == "VOICE_STATE_CREATE" &&
+                sub.at("args").at("channel_id") == "123") {
+                saw_channel_sub = true;
+            }
+        }
+        assert(saw_channel_sub);
+
+        char drain[64];
+        ::read(cfd, drain, sizeof(drain));
+        ::close(cfd);
+        mock_done = true;
+    });
+
+    FakeHttp http;
+    RpcConfig cfg;
+    cfg.client_id = "207646673902501888";
+    cfg.auth_mode = AuthMode::Streamkit;
+
+    int64_t fake_now = 0;
+    RpcClient client(cfg, http, [&] { return fake_now; });
+
+    bool got_channel_select = false, got_voice_create_u9 = false;
+    client.set_event_handler([&](const RpcEvent& ev) {
+        if (ev.kind == RpcEvent::ChannelSelect && ev.channel_id == "123") got_channel_select = true;
+        if (ev.kind == RpcEvent::VoiceCreate && ev.voice.user_id == "u9" && ev.voice.self_mute)
+            got_voice_create_u9 = true;
+    });
+
+    client.start();
+    for (int i = 0; i < 5000 && !(client.state() == ConnectionState::InChannel &&
+                                  got_voice_create_u9); ++i) {
+        client.poll();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    // Reached InChannel and seeded the existing participant WITHOUT a VOICE_CHANNEL_SELECT
+    // event from Discord.
+    assert(client.state() == ConnectionState::InChannel);
+    assert(got_channel_select);
+    assert(got_voice_create_u9);
 
     client.stop();
     mock.join();
@@ -386,6 +512,11 @@ int main() {
     {
         int lfd = make_listener(sock_path);
         test_full_handshake_to_in_channel(lfd);
+        ::close(lfd);
+    }
+    {
+        int lfd = make_listener(sock_path);
+        test_already_in_channel_on_connect(lfd);
         ::close(lfd);
     }
     {

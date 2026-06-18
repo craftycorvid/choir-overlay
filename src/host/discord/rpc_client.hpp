@@ -72,6 +72,7 @@ private:
     // FSM steps keyed off command-response frames.
     void handle_authorize_response(const nlohmann::json& frame);
     void handle_authenticate_response(const nlohmann::json& frame);
+    void handle_selected_voice_channel(const nlohmann::json& frame);
     void handle_channel_select(const std::string& channel_id);
 
     void subscribe_channel(const std::string& channel_id);

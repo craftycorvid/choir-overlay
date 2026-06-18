@@ -320,11 +320,69 @@ static void test_parse_speaking_missing_fields() {
     assert(ev->channel_id == "");
 }
 
+void test_build_get_selected_voice_channel() {
+    json m = build_get_selected_voice_channel();
+    assert(m.at("cmd") == "GET_SELECTED_VOICE_CHANNEL");
+    assert(m.contains("nonce"));
+    assert(m.at("args").is_object());
+}
+
+void test_parse_selected_voice_channel_in_channel() {
+    json frame = {
+        {"cmd", "GET_SELECTED_VOICE_CHANNEL"},
+        {"data", {
+            {"id", "123"}, {"name", "General"},
+            {"voice_states", json::array({
+                json{{"user", {{"id", "u1"}, {"username", "Bob"}, {"avatar", "h1"}}},
+                     {"nick", "Bobby"},
+                     {"voice_state", {{"mute", true}, {"deaf", false},
+                                      {"self_mute", false}, {"self_deaf", true}}}},
+                json{{"user", {{"id", "u2"}, {"username", "Carol"}, {"avatar", nullptr}}},
+                     {"voice_state", {{"mute", false}, {"deaf", false},
+                                      {"self_mute", false}, {"self_deaf", false}}}},
+            })},
+        }},
+    };
+    SelectedChannel sel = parse_selected_voice_channel(frame);
+    assert(sel.in_channel);
+    assert(sel.channel_id == "123");
+    assert(sel.states.size() == 2);
+    assert(sel.states[0].user_id == "u1");
+    assert(sel.states[0].nick == "Bobby");
+    assert(sel.states[0].avatar_hash == "h1");
+    assert(sel.states[0].mute == true);
+    assert(sel.states[0].self_deaf == true);
+    assert(sel.states[1].user_id == "u2");
+    assert(sel.states[1].nick == "Carol");      // falls back to username
+    assert(sel.states[1].avatar_hash.empty());  // null avatar -> ""
+}
+
+void test_parse_selected_voice_channel_null() {
+    json frame = {{"cmd", "GET_SELECTED_VOICE_CHANNEL"}, {"data", nullptr}};
+    SelectedChannel sel = parse_selected_voice_channel(frame);
+    assert(!sel.in_channel);
+    assert(sel.channel_id.empty());
+    assert(sel.states.empty());
+}
+
+void test_parse_selected_voice_channel_garbage() {
+    // Non-object frame, missing data, data without an id, or non-object data => not in.
+    assert(!parse_selected_voice_channel(json("not an object")).in_channel);
+    assert(!parse_selected_voice_channel(json::object()).in_channel);
+    assert(!parse_selected_voice_channel(json{{"data", {{"name", "x"}}}}).in_channel);  // no id
+    assert(!parse_selected_voice_channel(json{{"data", json::array()}}).in_channel);    // array
+}
+
 int main() {
     test_build_authorize();
     test_build_authenticate();
     test_build_subscribe();
+    test_build_get_selected_voice_channel();
     test_nonces_globally_unique();
+
+    test_parse_selected_voice_channel_in_channel();
+    test_parse_selected_voice_channel_null();
+    test_parse_selected_voice_channel_garbage();
 
     test_parse_voice_state_update();
     test_parse_voice_state_create();
