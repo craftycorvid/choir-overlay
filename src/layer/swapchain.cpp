@@ -142,11 +142,17 @@ bool build_state(SwapchainState& s, VkSwapchainKHR swapchain) {
     if (d.GetSwapchainImagesKHR(dev, swapchain, &count, images.data()) != VK_SUCCESS)
         return false;
 
-    // --- Render pass: single color attachment, LOAD to preserve the app's frame.
-    // Layouts match MangoHud's overlay pass (setup_swapchain_data): initialLayout
-    // COLOR_ATTACHMENT_OPTIMAL (the image is treated as already a render target — no
-    // transition in), finalLayout PRESENT_SRC_KHR so it is presentable after the pass. A
-    // single EXTERNAL->subpass dependency orders our color writes after the app's. ---
+    // --- Render pass: single color attachment, LOAD to preserve the app's frame,
+    // PRESENT_SRC_KHR in and out so the image stays presentable in place. The image
+    // genuinely arrives in PRESENT_SRC (the app transitioned it for present and we wait on
+    // its render-finished semaphores), so declaring initialLayout=PRESENT_SRC is correct,
+    // and the render pass itself does the PRESENT_SRC -> COLOR_ATTACHMENT_OPTIMAL (subpass)
+    // -> PRESENT_SRC transitions, including any decompression. NOTE: do NOT switch
+    // initialLayout to COLOR_ATTACHMENT_OPTIMAL "to match MangoHud" without ALSO inserting
+    // an explicit PRESENT_SRC->COLOR_ATTACHMENT_OPTIMAL image barrier before the pass (as
+    // MangoHud's render_swapchain_display does): declaring a layout the image was never
+    // transitioned into corrupts NVIDIA's render-target compression state -> Xid 13/32 ->
+    // device lost (observed when toggling HDR). This self-contained form needs no barrier. ---
     VkAttachmentDescription att{};
     att.format = s.format;
     att.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -154,7 +160,7 @@ bool build_state(SwapchainState& s, VkSwapchainKHR swapchain) {
     att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    att.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    att.initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     att.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
     VkAttachmentReference ref{};
@@ -166,21 +172,30 @@ bool build_state(SwapchainState& s, VkSwapchainKHR swapchain) {
     sub.colorAttachmentCount = 1;
     sub.pColorAttachments = &ref;
 
-    VkSubpassDependency dep{};
-    dep.srcSubpass = VK_SUBPASS_EXTERNAL;
-    dep.dstSubpass = 0;
-    dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dep.srcAccessMask = 0;
-    dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    // External dependencies make the layout transitions visible: the present-source
+    // read before the pass and after it. dstStageMask COLOR_ATTACHMENT_OUTPUT matches
+    // where the clear-attachments load/store happen.
+    VkSubpassDependency deps[2]{};
+    deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+    deps[0].dstSubpass = 0;
+    deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    deps[1].srcSubpass = 0;
+    deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+    deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[1].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    deps[1].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
     VkRenderPassCreateInfo rpci{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
     rpci.attachmentCount = 1;
     rpci.pAttachments = &att;
     rpci.subpassCount = 1;
     rpci.pSubpasses = &sub;
-    rpci.dependencyCount = 1;
-    rpci.pDependencies = &dep;
+    rpci.dependencyCount = 2;
+    rpci.pDependencies = deps;
     if (d.CreateRenderPass(dev, &rpci, nullptr, &s.render_pass) != VK_SUCCESS) {
         s.render_pass = VK_NULL_HANDLE;
         return false;
