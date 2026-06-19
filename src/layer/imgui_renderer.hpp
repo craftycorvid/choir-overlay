@@ -54,9 +54,12 @@ public:
     // global loader, whose trampolines reject the unwrapped handles a layer sees.
     // Returns true on success; on failure the renderer stays not-ready() and tears
     // down cleanly.
+    // `srgb` is true when the swapchain (and thus the render-pass attachment) uses an
+    // _SRGB format; the renderer then pre-converts ImGui vertex colors sRGB->linear so
+    // the hardware encode on store reproduces the authored colors (see srgb.hpp).
     bool init(VkInstance inst, VkPhysicalDevice phys, VkDevice dev, uint32_t queue_family,
               VkQueue queue, VkRenderPass render_pass, uint32_t image_count,
-              uint32_t api_version, PFN_vkGetInstanceProcAddr gipa,
+              uint32_t api_version, bool srgb, PFN_vkGetInstanceProcAddr gipa,
               const DeviceDispatch& disp);
 
     // Begin and build a frame for the given framebuffer extent: NewFrame -> draw the
@@ -106,6 +109,7 @@ public:
 private:
     bool init_done_ = false;
     bool frame_started_ = false;  // begin_frame called this present, end_frame pending
+    bool srgb_ = false;           // attachment is _SRGB -> convert vertex colors to linear
     ImGuiContext* ctx_ = nullptr;
     VkDevice device_ = VK_NULL_HANDLE;
     VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE;

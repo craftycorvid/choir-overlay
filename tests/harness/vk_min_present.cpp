@@ -74,13 +74,16 @@ int main(int argc, char** argv) {
     const char* readback = nullptr;
     bool layer_info = false;
     bool recreate = false;  // recreate the swapchain once via oldSwapchain before presenting
+    bool want_srgb = false; // prefer an _SRGB swapchain format (to test the layer's sRGB path)
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) frames = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--readback") == 0 && i + 1 < argc) readback = argv[++i];
         else if (std::strcmp(argv[i], "--layer-info") == 0) layer_info = true;
         else if (std::strcmp(argv[i], "--recreate") == 0) recreate = true;
+        else if (std::strcmp(argv[i], "--srgb") == 0) want_srgb = true;
         else if (std::strcmp(argv[i], "--help") == 0) {
-            std::puts("vk_min_present [--frames N] [--readback OUT.ppm] [--layer-info] [--recreate]");
+            std::puts("vk_min_present [--frames N] [--readback OUT.ppm] [--layer-info] "
+                      "[--recreate] [--srgb]");
             return 0;
         }
     }
@@ -179,9 +182,25 @@ int main(int argc, char** argv) {
     vkGetPhysicalDeviceSurfaceFormatsKHR(phys, surface, &fmtc, nullptr);
     std::vector<VkSurfaceFormatKHR> fmts(fmtc);
     vkGetPhysicalDeviceSurfaceFormatsKHR(phys, surface, &fmtc, fmts.data());
+    // Prefer B8G8R8A8 in the requested color space (the readback handles BGRA order);
+    // fall back to the R8G8B8A8 variant, else the first advertised format.
     VkSurfaceFormatKHR chosen = fmts[0];
+    const VkFormat pref1 = want_srgb ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM;
+    const VkFormat pref2 = want_srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+    bool picked = false;
     for (auto& f : fmts)
-        if (f.format == VK_FORMAT_B8G8R8A8_UNORM) { chosen = f; break; }
+        if (f.format == pref1) { chosen = f; picked = true; break; }
+    if (!picked)
+        for (auto& f : fmts)
+            if (f.format == pref2) { chosen = f; break; }
+
+    // If --srgb was requested but no sRGB surface format is available, skip (77) rather
+    // than silently testing a UNORM path.
+    if (want_srgb && chosen.format != VK_FORMAT_B8G8R8A8_SRGB &&
+        chosen.format != VK_FORMAT_R8G8B8A8_SRGB) {
+        std::fprintf(stderr, "vk_min_present: no sRGB surface format — skipping\n");
+        return 77;
+    }
 
     VkSurfaceCapabilitiesKHR caps;
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys, surface, &caps);

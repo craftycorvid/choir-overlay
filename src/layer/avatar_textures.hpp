@@ -35,8 +35,10 @@ public:
     AvatarTextures& operator=(const AvatarTextures&) = delete;
 
     // Bind to the ImguiRenderer that owns the device + descriptor pool. Call once,
-    // after the renderer is ready(). Cheap; no Vulkan calls here.
-    void init(ImguiRenderer* renderer);
+    // after the renderer is ready(). Cheap; no Vulkan calls here. `srgb` must match
+    // the swapchain's color space: when true, avatar images use an _SRGB format so the
+    // sampler decodes them and the sRGB attachment's store-encode reproduces the source.
+    void init(ImguiRenderer* renderer, bool srgb);
 
     // Load (or return the cached) texture for `req`. Reads req.path via
     // read_avatar_rgba, uploads a sampled VkImage (staging buffer + one-shot copy,
@@ -72,6 +74,7 @@ private:
     void destroy_texture(Texture& t);
 
     ImguiRenderer* renderer_ = nullptr;
+    bool srgb_ = false;  // use an _SRGB image format (matches the swapchain color space)
     std::unordered_map<std::string, Texture> textures_;
 };
 

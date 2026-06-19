@@ -18,6 +18,21 @@
 namespace choir {
 namespace {
 
+// True for swapchain formats that apply the sRGB transfer function on store, so the
+// overlay must pre-convert its colors (see srgb.hpp / imgui_renderer / avatar_textures).
+bool is_srgb_format(VkFormat f) {
+    switch (f) {
+        case VK_FORMAT_R8G8B8A8_SRGB:
+        case VK_FORMAT_B8G8R8A8_SRGB:
+        case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
+        case VK_FORMAT_R8G8B8_SRGB:
+        case VK_FORMAT_B8G8R8_SRGB:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // Per-swapchain-image overlay resources. One command buffer + fence + semaphore
 // per image so a buffer still in flight (FIFO can have several frames queued) is
 // never re-recorded before its prior submit finishes.
@@ -303,7 +318,8 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
         if (!s.imgui->init(s.dd->instance, s.dd->physical_device, s.device,
                            s.dd->graphics_queue_family, s.dd->graphics_queue,
                            s.render_pass, static_cast<uint32_t>(s.images.size()),
-                           s.dd->api_version, s.dd->instance_gipa, d)) {
+                           s.dd->api_version, is_srgb_format(s.format), s.dd->instance_gipa,
+                           d)) {
             s.imgui.reset();  // not ready — overlay draws nothing this swapchain
         }
         if (const char* dbg = ::getenv("CHOIR_DEBUG_LAZY_INIT"); dbg && *dbg) {
@@ -319,7 +335,7 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
     // the renderer's device + descriptor pool). Created once per swapchain.
     if (renderer_ready && !s.avatars) {
         s.avatars = std::make_unique<AvatarTextures>();
-        s.avatars->init(s.imgui.get());
+        s.avatars->init(s.imgui.get(), is_srgb_format(s.format));
     }
 
     // Build the ImGui draw list for this frame BEFORE recording the render pass

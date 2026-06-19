@@ -15,6 +15,7 @@
 
 #include "dispatch.hpp"
 #include "overlay_ui.hpp"
+#include "srgb.hpp"
 
 namespace choir {
 namespace {
@@ -54,9 +55,10 @@ ImguiRenderer::~ImguiRenderer() { shutdown(); }
 
 bool ImguiRenderer::init(VkInstance inst, VkPhysicalDevice phys, VkDevice dev,
                          uint32_t queue_family, VkQueue queue, VkRenderPass render_pass,
-                         uint32_t image_count, uint32_t api_version,
+                         uint32_t image_count, uint32_t api_version, bool srgb,
                          PFN_vkGetInstanceProcAddr gipa, const DeviceDispatch& disp) {
     if (init_done_) return true;
+    srgb_ = srgb;
 
     // Hard requirements — without these we cannot init the backend. Fall back to
     // "not ready" so the present hook draws nothing and still presents the frame.
@@ -212,7 +214,28 @@ void ImguiRenderer::end_frame(VkCommandBuffer cmd) {
     // command buffer + queue (synchronous), independent of `cmd`.
     if (cmd != VK_NULL_HANDLE) {
         ImDrawData* draw_data = ImGui::GetDrawData();
-        if (draw_data) ImGui_ImplVulkan_RenderDrawData(draw_data, cmd);
+        if (draw_data) {
+            // sRGB attachment: the GPU treats our (sRGB-authored) vertex colors as linear
+            // and encodes linear->sRGB on store, brightening/over-saturating everything.
+            // Pre-convert the RGB channels sRGB->linear (alpha unchanged) so the encode
+            // reproduces the authored colors. Avatar textures handle their own decode via
+            // an _SRGB image format (avatar_textures.cpp). UNORM attachments skip this.
+            if (srgb_) {
+                for (int n = 0; n < draw_data->CmdListsCount; ++n) {
+                    ImDrawList* dl = draw_data->CmdLists[n];
+                    for (ImDrawVert& v : dl->VtxBuffer) {
+                        const ImU32 c = v.col;
+                        const uint8_t r = (c >> IM_COL32_R_SHIFT) & 0xFFu;
+                        const uint8_t g = (c >> IM_COL32_G_SHIFT) & 0xFFu;
+                        const uint8_t b = (c >> IM_COL32_B_SHIFT) & 0xFFu;
+                        const uint8_t a = (c >> IM_COL32_A_SHIFT) & 0xFFu;
+                        v.col = IM_COL32(srgb_to_linear_u8(r), srgb_to_linear_u8(g),
+                                         srgb_to_linear_u8(b), a);
+                    }
+                }
+            }
+            ImGui_ImplVulkan_RenderDrawData(draw_data, cmd);
+        }
     }
     frame_started_ = false;
 }

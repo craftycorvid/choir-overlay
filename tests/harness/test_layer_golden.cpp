@@ -180,10 +180,11 @@ int main(int argc, char** argv) {
     // Helper: run vk_min_present (optionally --recreate) with the layer + the given env,
     // read back the PPM. Returns the child exit code; fills w/h/rgb on success.
     auto run_present = [&](bool recreate, const std::vector<std::string>& env, uint32_t& w,
-                          uint32_t& h, std::vector<uint8_t>& rgb) -> int {
+                          uint32_t& h, std::vector<uint8_t>& rgb, bool srgb = false) -> int {
         std::vector<const char*> a = {vk_app.c_str(), "--frames", "40", "--readback",
                                       out.c_str()};
         if (recreate) a.push_back("--recreate");
+        if (srgb) a.push_back("--srgb");
         a.push_back(nullptr);
         int code = run_child(vk_app.c_str(), a.data(), env);
         if (code != 0) return code;
@@ -286,10 +287,39 @@ int main(int argc, char** argv) {
         }
     }
 
+    // =========================================================================
+    // Phase 3: sRGB SWAPCHAIN — colors must NOT over-saturate. Under an _SRGB swapchain
+    // the GPU gamma-encodes on store; without the layer's sRGB color path the avatars'
+    // minor channels (authored 64) bloom to ~137 and FAIL is_red/green/blue (which require
+    // minor channels < 120). So passing these same predicates under --srgb proves the fix
+    // reproduces the AUTHORED avatar colors (the Diablo-4 hyper-saturation bug). We do not
+    // check the app-blue background here — the app's own clear shifts under an sRGB image.
+    // vk_min_present exits 77 if no sRGB surface format is available (skip, not fail).
+    // =========================================================================
+    {
+        uint32_t sw = 0, sh = 0;
+        std::vector<uint8_t> s2;
+        int cs = run_present(false, layer_env, sw, sh, s2, /*srgb=*/true);
+        if (cs == 77) {
+            std::fprintf(stderr, "golden: sRGB run skipped (no sRGB surface format)\n");
+        } else if (cs != 0 || sw < 256 || sh < 256) {
+            std::fprintf(stderr, "golden: FAIL — sRGB run exited %d / bad readback\n", cs);
+            rc = 1;
+        } else {
+            check(any_pixel(s2, sw, sh, px0, py0, px1, py1, is_red),
+                  "sRGB: no accurate RED avatar (over-saturated under sRGB?)");
+            check(any_pixel(s2, sw, sh, px0, py0, px1, py1, is_green),
+                  "sRGB: no accurate GREEN avatar (over-saturated under sRGB?)");
+            check(any_pixel(s2, sw, sh, px0, py0, px1, py1, is_blue),
+                  "sRGB: no accurate BLUE avatar (over-saturated under sRGB?)");
+            std::printf("golden: sRGB — avatars read back as authored colors (no over-saturation)\n");
+        }
+    }
+
     kill_and_reap(host);
 
     // =========================================================================
-    // Phase 3: NO HOST — overlay draws nothing; the whole frame stays app blue.
+    // Phase 4: NO HOST — overlay draws nothing; the whole frame stays app blue.
     // =========================================================================
     // (host killed above; its abstract socket is released on exit — no file to unlink)
     {

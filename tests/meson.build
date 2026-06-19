@@ -163,6 +163,14 @@ test('fade',
   ),
 )
 
+# Layer sRGB<->linear conversion (pure; includes src/layer/srgb.hpp).
+test('srgb',
+  executable('t_srgb',
+    'layer/test_srgb.cpp',
+    include_directories: layer_inc,
+  ),
+)
+
 layer_dir = meson.current_build_dir() / '..' / 'src' / 'layer'
 # Point XDG_DATA_HOME at an empty dir so the loader does NOT discover a globally
 # *installed* choir implicit layer (~/.local/share/vulkan/implicit_layer.d) — which
