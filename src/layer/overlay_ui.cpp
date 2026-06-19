@@ -8,6 +8,7 @@
 #include "overlay_ui.hpp"
 
 #include <algorithm>
+#include <cfloat>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -32,7 +33,6 @@ constexpr float kAvatarTextGap = 10.0f;
 constexpr float kPanelWidth = 220.0f;  // fixed panel width (name truncates if longer)
 constexpr float kRowHeight = kAvatar;  // a row is as tall as its avatar
 constexpr float kRing = 2.5f;          // speaking-ring thickness
-constexpr float kRound = 8.0f;         // toast background corner rounding
 constexpr float kNamePadX = 6.0f;      // per-name background "pill" horizontal padding
 constexpr float kNamePadY = 2.0f;      // per-name background "pill" vertical padding
 constexpr float kNameRound = 5.0f;     // per-name background corner rounding
@@ -50,10 +50,18 @@ ImU32 scale_alpha(ImU32 col, float m) {
     return (col & ~(0xFFu << IM_COL32_A_SHIFT)) | (ai << IM_COL32_A_SHIFT);
 }
 
-constexpr float kToastWidth = 240.0f;
-constexpr float kToastPad = 10.0f;
-constexpr float kToastGap = 8.0f;
-constexpr float kTitleBodyGap = 4.0f;
+// Notification toasts, styled after the official Discord overlay: a dark rounded card
+// with a circular icon on the left, a bright title, and a muted body that wraps to two
+// lines (ellipsis on overflow).
+constexpr float kToastWidth = 320.0f;
+constexpr float kToastPad = 14.0f;       // card inner padding
+constexpr float kToastGap = 8.0f;        // vertical gap between stacked cards
+constexpr float kToastIcon = 40.0f;      // icon diameter
+constexpr float kToastIconGap = 12.0f;   // gap between icon and text
+constexpr float kToastRound = 12.0f;     // card corner radius
+constexpr float kTitleBodyGap = 4.0f;    // gap between title and body
+constexpr float kTitleScale = 1.2f;      // title font size relative to the base font
+constexpr int   kToastBodyLines = 2;     // max body lines before truncating with "..."
 
 constexpr float kPi = 3.14159265358979323846f;
 
@@ -136,18 +144,73 @@ void draw_user_glyph(ImDrawList* dl, float cx, float cy, float r, float a) {
     dl->PathFillConvex(fg);
 }
 
-// Resolve a participant's avatar texture, loading it on demand from the retained map
-// if not yet cached (this is what makes avatars survive a swapchain recreate).
-ImTextureID resolve_avatar(const Participant& p, AvatarTextures& textures,
-                           StateClient& client) {
-    if (p.avatar_hash.empty()) return ImTextureID_Invalid;
-    ImTextureID id = textures.lookup(p.avatar_hash);
+// Resolve an avatar/icon texture by hash, loading it on demand from the retained map if
+// not yet cached on this swapchain (this is what makes images survive a swapchain
+// recreate). Returns ImTextureID_Invalid for an empty hash or any load failure.
+ImTextureID resolve_icon(const std::string& hash, AvatarTextures& textures,
+                         StateClient& client) {
+    if (hash.empty()) return ImTextureID_Invalid;
+    ImTextureID id = textures.lookup(hash);
     if (id != ImTextureID_Invalid) return id;
     // Not loaded yet on this swapchain's texture cache: pull the retained AvatarReq
     // (announced by the host at some earlier point over the persistent connection) and
     // upload it now, on the render thread.
-    if (auto req = client.avatar_for(p.avatar_hash)) id = textures.get_or_load(*req);
+    if (auto req = client.avatar_for(hash)) id = textures.get_or_load(*req);
     return id;
+}
+
+ImTextureID resolve_avatar(const Participant& p, AvatarTextures& textures,
+                           StateClient& client) {
+    return resolve_icon(p.avatar_hash, textures, client);
+}
+
+// Draw a circular avatar/icon of diameter `d` with its top-left at (x,y), faded by `a`.
+// A valid `tex` is drawn as a circle-cropped image; otherwise the neutral placeholder
+// disc + generic person silhouette is drawn instead.
+void draw_circle_icon(ImDrawList* dl, float x, float y, float d, ImTextureID tex, float a) {
+    const float r = d * 0.5f;
+    const float cx = x + r, cy = y + r;
+    if (tex != ImTextureID_Invalid) {
+        dl->AddImageRounded(tex, ImVec2(x, y), ImVec2(x + d, y + d), ImVec2(0, 0),
+                            ImVec2(1, 1), scale_alpha(IM_COL32_WHITE, a), r);
+    } else {
+        dl->AddCircleFilled(ImVec2(cx, cy), r, scale_alpha(IM_COL32(70, 74, 82, 255), a), 24);
+        draw_user_glyph(dl, cx, cy, r, a);
+    }
+}
+
+// Word-wrap `text` (measured at font `size`) to `wrap_width`, clamped to `max_lines`. If
+// text remains after the last allowed line, that line is truncated to fit a trailing
+// "..." ellipsis. Returns the lines as owned strings (the last may end in "...").
+std::vector<std::string> wrap_text(const std::string& text, float size, float wrap_width,
+                                   int max_lines) {
+    std::vector<std::string> lines;
+    if (text.empty() || wrap_width <= 1.0f || max_lines <= 0) return lines;
+    ImFont* font = ImGui::GetFont();
+    const char* p = text.c_str();
+    const char* end = p + text.size();
+    for (int i = 0; i < max_lines && p < end; ++i) {
+        const char* fit = font->CalcWordWrapPosition(size, p, end, wrap_width);
+        if (fit <= p) fit = p + 1;             // guarantee progress on a too-narrow column
+        if (fit >= end) {                       // remainder fits on this line
+            lines.emplace_back(p, end);
+            break;
+        }
+        if (i == max_lines - 1) {               // overflow on the last line: ellipsize
+            const float ell = font->CalcTextSizeA(size, FLT_MAX, 0.0f, "...").x;
+            const char* cut = font->CalcWordWrapPosition(size, p, end, wrap_width - ell);
+            if (cut <= p) cut = fit;            // ellipsis wider than the column: fall back
+            std::string line(p, cut);
+            while (!line.empty() && line.back() == ' ') line.pop_back();
+            line += "...";
+            lines.push_back(std::move(line));
+            break;
+        }
+        lines.emplace_back(p, fit);
+        p = fit;
+        while (p < end && *p == ' ') ++p;       // swallow the break's leading spaces
+    }
+    return lines;
 }
 
 // --- Voice participant panel ---------------------------------------------------------
@@ -231,18 +294,8 @@ void draw_voice_panel(const Snapshot& snap, AvatarTextures& textures, StateClien
             // idle, full while speaking). Multiplied by the panel-wide style Alpha.
             const float a = g_anim[p.user_id];
 
-            ImTextureID tex = resolve_avatar(p, textures, client);
-            if (tex != ImTextureID_Invalid) {
-                // Circular avatar via a fully-rounded image (rounding == radius).
-                dl->AddImageRounded(tex, ImVec2(ax, ay), ImVec2(ax + avatar, ay + avatar),
-                                    ImVec2(0, 0), ImVec2(1, 1), scale_alpha(IM_COL32_WHITE, a),
-                                    radius);
-            } else {
-                // No avatar image: a neutral disc with a generic person silhouette.
-                dl->AddCircleFilled(ImVec2(cx, cy), radius,
-                                    scale_alpha(IM_COL32(70, 74, 82, 255), a), 24);
-                draw_user_glyph(dl, cx, cy, radius, a);
-            }
+            // Circular avatar, or the neutral disc + person silhouette when there's none.
+            draw_circle_icon(dl, ax, ay, avatar, resolve_avatar(p, textures, client), a);
 
             // Speaking indicator: a bright green ring around the avatar (fades in too).
             if (p.speaking) {
@@ -280,7 +333,10 @@ void draw_voice_panel(const Snapshot& snap, AvatarTextures& textures, StateClien
 }
 
 // --- Notification toasts -------------------------------------------------------------
-void draw_toasts(const Snapshot& snap, VkExtent2D extent, int64_t now_ms) {
+// Styled after the official Discord overlay: a dark rounded card carrying a circular icon
+// on the left, a bright (slightly larger) title, and a muted body wrapped to two lines.
+void draw_toasts(const Snapshot& snap, AvatarTextures& textures, StateClient& client,
+                 VkExtent2D extent, int64_t now_ms) {
     const AppearanceConfig& cfg = snap.config;
     const float s = cfg.scale > 0.05f ? cfg.scale : 1.0f;
     const int64_t dur = cfg.toast_duration_ms > 0 ? cfg.toast_duration_ms : 5000;
@@ -296,9 +352,16 @@ void draw_toasts(const Snapshot& snap, VkExtent2D extent, int64_t now_ms) {
 
     const float width = kToastWidth * s;
     const float pad = kToastPad * s;
-    const float line_h = ImGui::GetTextLineHeight();
+    const float icon = kToastIcon * s;
+    const float icon_gap = kToastIconGap * s;
+    const float round = kToastRound * s;
+    const float gap = kTitleBodyGap * s;
+    const float line_h = ImGui::GetTextLineHeight();         // body line height
+    const float base = ImGui::GetFontSize();
+    const float title_sz = base * kTitleScale;               // title is a touch larger
     const float margin = kMargin * s;
     const Anchor anchor = cfg.toast_anchor;
+    ImFont* font = ImGui::GetFont();
 
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, cfg.opacity);
 
@@ -311,9 +374,18 @@ void draw_toasts(const Snapshot& snap, VkExtent2D extent, int64_t now_ms) {
     int idx = 0;
     for (const Notification* np : live) {
         const Notification& n = *np;
-        // Toast height = padding + title line + (gap + body line if body present).
-        const bool has_body = !n.body.empty();
-        const float h = pad * 2.0f + line_h + (has_body ? (kTitleBodyGap * s + line_h) : 0.0f);
+        const bool has_icon = !n.icon_hash.empty();
+        const float text_x = pad + (has_icon ? icon + icon_gap : 0.0f);
+        const float text_w = width - text_x - pad;
+
+        // Lay out the title (one line, ellipsized) and body (up to two lines) up front so
+        // the card height fits the text — or the icon, whichever is taller.
+        const auto title_lines = wrap_text(n.title, title_sz, text_w, 1);
+        const auto body_lines = wrap_text(n.body, base, text_w, kToastBodyLines);
+        const float text_h =
+            title_sz + (body_lines.empty() ? 0.0f : gap + body_lines.size() * line_h);
+        const float inner_h = std::max(has_icon ? icon : 0.0f, text_h);
+        const float h = inner_h + pad * 2.0f;
 
         float y;
         if (is_top(anchor)) {
@@ -334,15 +406,44 @@ void draw_toasts(const Snapshot& snap, VkExtent2D extent, int64_t now_ms) {
         const std::string id = "##choir_toast_" + std::to_string(idx++);
         if (ImGui::Begin(id.c_str(), nullptr, kOverlayWindowFlags)) {
             ImDrawList* dl = ImGui::GetWindowDrawList();
+
+            // Soft drop shadow: a few translucent rounded rects fanning outward, drawn
+            // outside the window's own clip rect (which is the card) so they aren't
+            // clipped away. Gives the card a sense of elevation over the game.
+            dl->PushClipRectFullScreen();
+            for (int i = 1; i <= 3; ++i) {
+                const float g = i * 2.0f * s;
+                dl->AddRectFilled(ImVec2(pos.x - g, pos.y - g + 3.0f * s),
+                                  ImVec2(pos.x + size.x + g, pos.y + size.y + g + 3.0f * s),
+                                  IM_COL32(0, 0, 0, 24 - i * 6), round + g);
+            }
+            dl->PopClipRect();
+
+            // Card background.
             dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y),
-                              IM_COL32(28, 30, 38, 235), kRound * s);
-            float ty = pos.y + pad;
-            dl->AddText(ImVec2(pos.x + pad, ty), IM_COL32(255, 255, 255, 255),
-                        n.title.c_str());
-            if (has_body) {
-                ty += line_h + kTitleBodyGap * s;
-                dl->AddText(ImVec2(pos.x + pad, ty), IM_COL32(205, 205, 212, 255),
-                            n.body.c_str());
+                              IM_COL32(32, 34, 40, 245), round);
+
+            // Icon (resolved image, or disc + person silhouette), centered vertically.
+            if (has_icon) {
+                const float iy = pos.y + pad + (inner_h - icon) * 0.5f;
+                draw_circle_icon(dl, pos.x + pad, iy, icon,
+                                 resolve_icon(n.icon_hash, textures, client), 1.0f);
+            }
+
+            // Title + body, vertically centered against the icon when the icon is taller.
+            const float tx = pos.x + text_x;
+            float ty = pos.y + pad + (inner_h - text_h) * 0.5f;
+            if (!title_lines.empty()) {
+                // Faux-bold: draw the title twice, offset 1px, for extra weight.
+                const ImU32 tc = IM_COL32(255, 255, 255, 255);
+                dl->AddText(font, title_sz, ImVec2(tx, ty), tc, title_lines[0].c_str());
+                dl->AddText(font, title_sz, ImVec2(tx + 1.0f, ty), tc, title_lines[0].c_str());
+            }
+            ty += title_sz + gap;
+            const ImU32 bc = IM_COL32(185, 187, 196, 255);
+            for (const std::string& ln : body_lines) {
+                dl->AddText(ImVec2(tx, ty), bc, ln.c_str());
+                ty += line_h;
             }
         }
         ImGui::End();
@@ -358,7 +459,7 @@ void draw_overlay(const Snapshot& snap, AvatarTextures& textures, StateClient& c
     if (!snap.in_voice) return;
 
     draw_voice_panel(snap, textures, client, extent, now_ms);
-    draw_toasts(snap, extent, now_ms);
+    draw_toasts(snap, textures, client, extent, now_ms);
 }
 
 }  // namespace choir

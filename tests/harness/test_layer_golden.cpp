@@ -87,6 +87,13 @@ bool is_silhouette(RGB p) {
     return near(p.r, 176, 30) && near(p.g, 181, 30) && near(p.b, 191, 30);
 }
 
+// The toast card background: a near-neutral dark charcoal (32,34,40) drawn over the app's
+// blue clear. It has low, close R/G and a modestly raised B — distinct from the app blue
+// (B~204) and from any avatar color (one channel ~224). The B ceiling excludes app blue.
+bool is_toast_bg(RGB p) {
+    return p.r > 20 && p.r < 60 && p.g > 22 && p.g < 65 && p.b > 28 && p.b < 95;
+}
+
 // Does any pixel in [x0,x1)x[y0,y1) satisfy `pred`?
 template <typename Pred>
 bool any_pixel(const std::vector<uint8_t>& rgb, uint32_t w, uint32_t h, uint32_t x0,
@@ -386,9 +393,44 @@ int main(int argc, char** argv) {
         }
     }
 
+    // =========================================================================
+    // Phase 6: NOTIFICATION TOAST — a fresh fake_host with --toast emits a notification
+    // (icon_hash=avatarA) anchored BOTTOM-LEFT (clear of the top-right voice panel). The
+    // toast must render as a card carrying its circular icon: the dark card background
+    // AND the red icon must appear in the bottom-left region.
+    // =========================================================================
+    {
+        pid_t host3 = spawn_fake_host(fake_host.c_str(), cache, "--toast");
+        if (host3 < 0) {
+            std::fprintf(stderr, "golden: FAIL — failed to spawn fake_host (--toast)\n");
+            rc = 1;
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));  // let it bind
+            uint32_t tw = 0, th = 0;
+            std::vector<uint8_t> trgb;
+            int ct = run_present(false, layer_env, tw, th, trgb);
+            if (ct == 77) {
+                std::fprintf(stderr, "golden: toast run skipped (no headless)\n");
+            } else if (ct != 0 || tw < 256 || th < 256) {
+                std::fprintf(stderr, "golden: FAIL — toast run exited %d / bad readback\n", ct);
+                rc = 1;
+            } else {
+                // Bottom-left region where the toast card sits (anchored there by --toast).
+                const uint32_t tx0 = 16, ty0 = 150, tx1 = 180, ty1 = 248;
+                check(any_pixel(trgb, tw, th, tx0, ty0, tx1, ty1, is_toast_bg),
+                      "toast: no card background drawn in the bottom-left");
+                check(any_pixel(trgb, tw, th, tx0, ty0, tx1, ty1, is_red),
+                      "toast: no avatar icon drawn on the card");
+                std::printf("golden: toast — card + circular icon drawn (Discord-style)\n");
+            }
+            kill_and_reap(host3);
+        }
+    }
+
     if (rc == 0)
         std::puts("golden: PASS — voice panel + avatars + speaking ring + mute glyph drawn; "
                   "avatars survive recreate; sRGB colors accurate; placeholder silhouette "
-                  "for avatar-less users; nothing drawn without a host");
+                  "for avatar-less users; notification toast with icon; nothing drawn "
+                  "without a host");
     return rc;
 }

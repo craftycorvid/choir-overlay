@@ -68,6 +68,7 @@ struct Config {
     bool corrupt_snapshot = false;
     bool all_speaking = false;  // mark every participant speaking (full-alpha indicators)
     bool no_avatar = false;     // give Carol an empty avatar_hash -> placeholder silhouette
+    bool toast = false;         // emit a notification toast (anchored bottom-left)
     int flap = 0;  // 0 = no flapping; N = N alternating in_voice snapshots after the first
 };
 
@@ -99,7 +100,7 @@ bool write_corrupt_avatar(const std::string& dir, const TestAvatar& a) {
 }
 
 choir::Snapshot make_snapshot(bool in_voice, uint64_t revision, bool all_speaking = false,
-                              bool no_avatar = false) {
+                              bool no_avatar = false, bool toast = false) {
     choir::Snapshot s;
     s.in_voice = in_voice;
     s.channel_name = "Test Voice";
@@ -117,6 +118,23 @@ choir::Snapshot make_snapshot(bool in_voice, uint64_t revision, bool all_speakin
     // silhouette placeholder instead of an image.
     if (no_avatar) p2.avatar_hash.clear();
     s.participants = {p0, p1, p2};
+
+    // Optional notification toast. Anchored bottom-left so it never overlaps the voice
+    // panel (top-right by default); created "now" with a long lifetime so it stays live
+    // through the test run. The body is intentionally long to exercise wrap + ellipsis.
+    if (toast) {
+        choir::Notification n;
+        n.id = "n1";
+        n.title = "Dave started a call";
+        n.body = "Are you free to play a few rounds tonight? Putting a group together for ranked";
+        n.icon_hash = "avatarA";  // reuse the red test avatar as the toast icon
+        n.created_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::system_clock::now().time_since_epoch())
+                           .count();
+        s.notifications.push_back(n);
+        s.config.toast_anchor = choir::Anchor::BottomLeft;
+        s.config.toast_duration_ms = 60000;
+    }
     return s;
 }
 
@@ -133,9 +151,9 @@ bool send_snapshot_and_avatars(int fd, const Config& cfg) {
     }
 
     std::string snap_json;
-    choir::to_json_str(
-        make_snapshot(/*in_voice=*/true, /*revision=*/1, cfg.all_speaking, cfg.no_avatar),
-        snap_json);
+    choir::to_json_str(make_snapshot(/*in_voice=*/true, /*revision=*/1, cfg.all_speaking,
+                                     cfg.no_avatar, cfg.toast),
+                       snap_json);
     if (!choir::write_frame(fd, choir::MsgType::Snapshot, snap_json)) return false;
 
     for (const auto& a : kAvatars) {
@@ -208,11 +226,12 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--corrupt-snapshot") == 0) cfg.corrupt_snapshot = true;
         else if (std::strcmp(argv[i], "--all-speaking") == 0) cfg.all_speaking = true;
         else if (std::strcmp(argv[i], "--no-avatar") == 0) cfg.no_avatar = true;
+        else if (std::strcmp(argv[i], "--toast") == 0) cfg.toast = true;
         else if (std::strcmp(argv[i], "--flap") == 0 && i + 1 < argc) cfg.flap = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--help") == 0) {
             std::puts("fake_host [--name ABSTRACT_NAME] [--cache-dir DIR] [--once] "
                       "[--corrupt-avatars] [--corrupt-snapshot] [--all-speaking] "
-                      "[--no-avatar] [--flap N]");
+                      "[--no-avatar] [--toast] [--flap N]");
             return 0;
         }
     }
