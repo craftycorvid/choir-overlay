@@ -35,11 +35,32 @@ inline bool is_srgb_format(VkFormat f) {
     }
 }
 
+// True for the floating-point formats used by HDR swapchains. These carry LINEAR values
+// (scRGB: 1.0 == 80 nits SDR-white), with no store-encode — so the overlay must write
+// linear, i.e. pre-convert its sRGB colors.
+inline bool is_hdr_float_format(VkFormat f) {
+    switch (f) {
+        case VK_FORMAT_R16G16B16A16_SFLOAT:   // the common scRGB HDR swapchain format
+        case VK_FORMAT_R16G16B16_SFLOAT:
+        case VK_FORMAT_B10G11R11_UFLOAT_PACK32:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // True when the overlay must pre-convert its sRGB colors to linear for this swapchain:
-// an _SRGB format (hardware re-encodes on store) OR an scRGB-linear HDR color space (the
-// buffer is linear, no encode). Both want sRGB->linear; see the header comment.
+//   * an _SRGB format (the GPU re-encodes linear->sRGB on store), or
+//   * an scRGB-linear HDR color space (EXTENDED_SRGB_LINEAR), or
+//   * a PASS_THROUGH HDR float swapchain — what DXVK/VKD3D use for HDR, where the buffer
+//     is linear scRGB and the presentation engine applies no transfer. Writing sRGB
+//     colors verbatim there leaves the minor channels too high -> washed-out/under-
+//     saturated (observed in Overwatch/Diablo 4 in HDR). All three want sRGB->linear.
 inline bool needs_srgb_conversion(VkFormat fmt, VkColorSpaceKHR cs) {
-    return cs == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT || is_srgb_format(fmt);
+    if (is_srgb_format(fmt)) return true;
+    if (cs == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT) return true;
+    if (cs == VK_COLOR_SPACE_PASS_THROUGH_EXT && is_hdr_float_format(fmt)) return true;
+    return false;
 }
 
 // True for HDR color spaces whose transfer function we do NOT yet handle (PQ / HLG): the
@@ -60,6 +81,7 @@ inline const char* colorspace_name(VkColorSpaceKHR cs) {
         case VK_COLOR_SPACE_HDR10_HLG_EXT:               return "HDR10_HLG";
         case VK_COLOR_SPACE_BT2020_LINEAR_EXT:           return "BT2020_LINEAR";
         case VK_COLOR_SPACE_DOLBYVISION_EXT:             return "DOLBYVISION";
+        case VK_COLOR_SPACE_PASS_THROUGH_EXT:            return "PASS_THROUGH";
         default:                                         return "other";
     }
 }

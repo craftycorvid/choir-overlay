@@ -8,6 +8,7 @@
 
 #include <cassert>
 
+using choir::is_hdr_float_format;
 using choir::is_srgb_format;
 using choir::is_unhandled_hdr;
 using choir::needs_srgb_conversion;
@@ -32,6 +33,16 @@ int main() {
     // case: a linear buffer that must receive linear values.
     assert(needs_srgb_conversion(VK_FORMAT_R16G16B16A16_SFLOAT,
                                  VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT));
+
+    // HDR float + PASS_THROUGH: what DXVK/VKD3D use for HDR (observed: Overwatch in HDR is
+    // R16G16B16A16_SFLOAT + PASS_THROUGH). The buffer is linear scRGB -> convert.
+    assert(is_hdr_float_format(VK_FORMAT_R16G16B16A16_SFLOAT));
+    assert(!is_hdr_float_format(VK_FORMAT_B8G8R8A8_UNORM));
+    assert(needs_srgb_conversion(VK_FORMAT_R16G16B16A16_SFLOAT,
+                                 VK_COLOR_SPACE_PASS_THROUGH_EXT));
+    // PASS_THROUGH with a non-float (8-bit) format is ambiguous/already-encoded -> NO.
+    assert(!needs_srgb_conversion(VK_FORMAT_B8G8R8A8_UNORM,
+                                  VK_COLOR_SPACE_PASS_THROUGH_EXT));
 
     // scRGB-NONLINEAR expects sRGB-encoded values already -> NO conversion.
     assert(!needs_srgb_conversion(VK_FORMAT_R16G16B16A16_SFLOAT,
