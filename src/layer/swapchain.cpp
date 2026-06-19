@@ -1,12 +1,9 @@
 #include "swapchain.hpp"
 
-#include <atomic>
 #include <chrono>
-#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -21,30 +18,6 @@
 
 namespace choir {
 namespace {
-
-// Diagnostic log for debugging the layer inside Proton/DXVK games, where a layer's stderr
-// is awkward to capture and a private container /tmp may hide files. Writes one line to
-// the file named by $CHOIR_DEBUG_LOG when that env var is a path (containing '/'); a bare
-// truthy value (e.g. "1") logs to /tmp/choir-overlay.log. No-op (and near-free) when the
-// var is unset, so it is safe to leave in place. Opens/closes per line so output survives
-// a crash and a host-side `tail -f` sees it live.
-const char* debug_log_path() {
-    const char* p = ::getenv("CHOIR_DEBUG_LOG");
-    if (!p || !*p) return nullptr;
-    return std::strchr(p, '/') ? p : "/tmp/choir-overlay.log";
-}
-void dlog(const char* fmt, ...) {
-    const char* path = debug_log_path();
-    if (!path) return;
-    FILE* f = ::fopen(path, "a");
-    if (!f) return;
-    std::va_list ap;
-    va_start(ap, fmt);
-    std::vfprintf(f, fmt, ap);
-    va_end(ap);
-    std::fputc('\n', f);
-    std::fclose(f);
-}
 
 // True for swapchain formats that apply the sRGB transfer function on store, so the
 // overlay must pre-convert its colors (see srgb.hpp / imgui_renderer / avatar_textures).
@@ -173,8 +146,11 @@ bool build_state(SwapchainState& s, VkSwapchainKHR swapchain) {
     if (d.GetSwapchainImagesKHR(dev, swapchain, &count, images.data()) != VK_SUCCESS)
         return false;
 
-    // --- Render pass: single color attachment, LOAD to preserve the app's frame,
-    // PRESENT_SRC_KHR in and out so the image stays presentable in place. ---
+    // --- Render pass: single color attachment, LOAD to preserve the app's frame.
+    // Layouts match MangoHud's overlay pass (setup_swapchain_data): initialLayout
+    // COLOR_ATTACHMENT_OPTIMAL (the image is treated as already a render target — no
+    // transition in), finalLayout PRESENT_SRC_KHR so it is presentable after the pass. A
+    // single EXTERNAL->subpass dependency orders our color writes after the app's. ---
     VkAttachmentDescription att{};
     att.format = s.format;
     att.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -182,7 +158,7 @@ bool build_state(SwapchainState& s, VkSwapchainKHR swapchain) {
     att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    att.initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    att.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     att.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
     VkAttachmentReference ref{};
@@ -194,30 +170,21 @@ bool build_state(SwapchainState& s, VkSwapchainKHR swapchain) {
     sub.colorAttachmentCount = 1;
     sub.pColorAttachments = &ref;
 
-    // External dependencies make the layout transitions visible: the present-source
-    // read before the pass and after it. dstStageMask COLOR_ATTACHMENT_OUTPUT matches
-    // where the clear-attachments load/store happen.
-    VkSubpassDependency deps[2]{};
-    deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
-    deps[0].dstSubpass = 0;
-    deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    deps[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    deps[1].srcSubpass = 0;
-    deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
-    deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    deps[1].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    deps[1].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    VkSubpassDependency dep{};
+    dep.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dep.dstSubpass = 0;
+    dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dep.srcAccessMask = 0;
+    dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
     VkRenderPassCreateInfo rpci{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
     rpci.attachmentCount = 1;
     rpci.pAttachments = &att;
     rpci.subpassCount = 1;
     rpci.pSubpasses = &sub;
-    rpci.dependencyCount = 2;
-    rpci.pDependencies = deps;
+    rpci.dependencyCount = 1;
+    rpci.pDependencies = &dep;
     if (d.CreateRenderPass(dev, &rpci, nullptr, &s.render_pass) != VK_SUCCESS) {
         s.render_pass = VK_NULL_HANDLE;
         return false;
@@ -305,13 +272,7 @@ bool build_state(SwapchainState& s, VkSwapchainKHR swapchain) {
 // here, means a recording failure never leaves a reset-but-unsubmitted fence that a
 // later UINT64_MAX wait would block on forever.
 ImageState* record_one(SwapchainState& s, uint32_t image_index) {
-    if (!s.ok || image_index >= s.images.size()) {
-        static std::atomic<uint64_t> s_skip_n{0};
-        if (s_skip_n.fetch_add(1, std::memory_order_relaxed) % 600 == 0)
-            dlog("record_one: SKIP (s.ok=%d image_index=%u images=%zu) -> no overlay",
-                 static_cast<int>(s.ok), image_index, s.images.size());
-        return nullptr;
-    }
+    if (!s.ok || image_index >= s.images.size()) return nullptr;
     const DeviceDispatch& d = s.dd->disp;
     VkDevice dev = s.device;
     ImageState& img = s.images[image_index];
@@ -364,16 +325,6 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
     }
 
     const bool renderer_ready = s.imgui && s.imgui->ready();
-    {
-        static std::atomic<uint64_t> s_rec_n{0};
-        const uint64_t rn = s_rec_n.fetch_add(1, std::memory_order_relaxed);
-        if (rn < 6 || rn % 600 == 0)
-            dlog("record_one #%llu: in_voice=%d host_disabled=%d imgui_tried=%d renderer_ready=%d "
-                 "avatars=%d",
-                 static_cast<unsigned long long>(rn), static_cast<int>(in_voice),
-                 static_cast<int>(host_disabled), static_cast<int>(s.imgui_tried),
-                 static_cast<int>(renderer_ready), static_cast<int>(static_cast<bool>(s.avatars)));
-    }
 
     // Once the renderer is ready, create the avatar texture cache bound to it (it uses
     // the renderer's device + descriptor pool). Created once per swapchain.
@@ -503,12 +454,6 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device,
         res = dd->disp.CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
         overlay_capable = false;
     }
-    dlog("CreateSwapchainKHR: fmt=%d app_usage=0x%x overlay_usage=0x%x res=%d overlay_capable=%d "
-         "gfx_family=%u graphics_queue=%p",
-         static_cast<int>(pCreateInfo->imageFormat), static_cast<unsigned>(pCreateInfo->imageUsage),
-         static_cast<unsigned>(overlay_ci.imageUsage), static_cast<int>(res),
-         static_cast<int>(overlay_capable), dd->graphics_queue_family,
-         static_cast<void*>(dd->graphics_queue));
     if (res != VK_SUCCESS) return res;
 
     // ENTRYPOINT CATCH-ALL (Task 18): everything below is overlay bookkeeping. If it
@@ -548,9 +493,6 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device,
         // entirely when the swapchain lacks color-attachment usage (see above): rendering
         // into those images would fault the GPU, so we leave s.ok == false and forward.
         if (overlay_capable) build_state(s, *pSwapchain);
-        dlog("  build_state: overlay_capable=%d ok=%d images=%zu extent=%ux%u",
-             static_cast<int>(overlay_capable), static_cast<int>(s.ok), s.images.size(),
-             s.extent.width, s.extent.height);
         {
             std::lock_guard<std::mutex> g(g_sc_lock);
             g_swapchains[*pSwapchain] = std::move(s);
@@ -625,21 +567,6 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue,
         const uint32_t app_wait_count = pPresentInfo->waitSemaphoreCount;
         const DeviceDispatch& d = dd->disp;
 
-        // Rate-limited present diagnostics. The KEY question for the DXVK "no overlay"
-        // case: is the present queue the same one we allocate command buffers for (the
-        // graphics queue)? If not, submitting our graphics-family command buffer here is
-        // illegal and the submit below fails.
-        static std::atomic<uint64_t> s_present_n{0};
-        const uint64_t pn = s_present_n.fetch_add(1, std::memory_order_relaxed);
-        const bool lg = pn < 6 || pn % 600 == 0;
-        if (lg)
-            dlog("Present #%llu: present_queue=%p graphics_queue=%p same_queue=%d "
-                 "gfx_family=%u nSwapchains=%u appWaitSems=%u",
-                 static_cast<unsigned long long>(pn), static_cast<void*>(queue),
-                 static_cast<void*>(dd->graphics_queue),
-                 static_cast<int>(queue == dd->graphics_queue), dd->graphics_queue_family, n,
-                 app_wait_count);
-
         std::lock_guard<std::mutex> g(g_sc_lock);
 
     // Phase 1: record the overlay render pass into every tracked swapchain's current
@@ -656,8 +583,6 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue,
         if (!img) { all_recorded = false; break; }
         recorded.push_back(img);
     }
-    if (lg) dlog("  recorded=%zu of %u (all_recorded=%d)", recorded.size(), n,
-                 static_cast<int>(all_recorded));
     if (!all_recorded) return forward();
 
     // Phase 2: submit one overlay command buffer per swapchain, chained so the app's
@@ -706,11 +631,7 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue,
             }
             break;  // present what already submitted; no deadlock
         }
-        const VkResult sub = d.QueueSubmit(queue, 1, &si, img->fence);
-        if (lg || sub != VK_SUCCESS)
-            dlog("  overlay submit[%u] on queue=%p result=%d", i, static_cast<void*>(queue),
-                 static_cast<int>(sub));
-        if (sub != VK_SUCCESS) {
+        if (d.QueueSubmit(queue, 1, &si, img->fence) != VK_SUCCESS) {
             // Submit failed: the fence was reset but is NOT in flight (left false
             // above), so the next present of this image will skip the wait. No leak,
             // no deadlock.
@@ -734,10 +655,7 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue,
         VkPresentInfoKHR pi = *pPresentInfo;
         pi.waitSemaphoreCount = static_cast<uint32_t>(overlay_sems.size());
         pi.pWaitSemaphores = overlay_sems.empty() ? nullptr : overlay_sems.data();
-        const VkResult pres = dd->disp.QueuePresentKHR(queue, &pi);
-        if (lg) dlog("  present result=%d (overlay submits=%zu)", static_cast<int>(pres),
-                     overlay_sems.size());
-        return pres;
+        return dd->disp.QueuePresentKHR(queue, &pi);
     } catch (...) {
         // An exception escaped the overlay block (e.g. std::bad_alloc growing a vector,
         // or a throw from deep in ImGui/avatar upload that record_one didn't catch).
