@@ -196,11 +196,13 @@ int main(int argc, char** argv) {
     // Helper: run vk_min_present (optionally --recreate) with the layer + the given env,
     // read back the PPM. Returns the child exit code; fills w/h/rgb on success.
     auto run_present = [&](bool recreate, const std::vector<std::string>& env, uint32_t& w,
-                          uint32_t& h, std::vector<uint8_t>& rgb, bool srgb = false) -> int {
+                          uint32_t& h, std::vector<uint8_t>& rgb, bool srgb = false,
+                          bool no_color = false) -> int {
         std::vector<const char*> a = {vk_app.c_str(), "--frames", "40", "--readback",
                                       out.c_str()};
         if (recreate) a.push_back("--recreate");
         if (srgb) a.push_back("--srgb");
+        if (no_color) a.push_back("--no-color-usage");
         a.push_back(nullptr);
         int code = run_child(vk_app.c_str(), a.data(), env);
         if (code != 0) return code;
@@ -427,10 +429,50 @@ int main(int argc, char** argv) {
         }
     }
 
+    // =========================================================================
+    // Phase 7: NO COLOR-ATTACHMENT USAGE — the app creates its swapchain WITHOUT
+    // VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT (mimicking DXVK's D3D11 blit-present path, which
+    // crashed NVIDIA GPUs with Xid 13/32 -> device lost). The layer must add the bit back
+    // in CreateSwapchainKHR; otherwise it (safely) disables the overlay for that swapchain.
+    // So the overlay rendering — the three avatars — must still appear. This proves the
+    // usage-bit fix end-to-end. (Safe by construction: if the fix is ever removed the
+    // layer disables the overlay rather than rendering into a non-attachment image, so
+    // this FAILS the avatar assertions instead of faulting the GPU.)
+    // =========================================================================
+    {
+        pid_t host4 = spawn_fake_host(fake_host.c_str(), cache);
+        if (host4 < 0) {
+            std::fprintf(stderr, "golden: FAIL — failed to spawn fake_host (no-color)\n");
+            rc = 1;
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));  // let it bind
+            uint32_t cw = 0, ch = 0;
+            std::vector<uint8_t> crgb;
+            int cc = run_present(false, layer_env, cw, ch, crgb, /*srgb=*/false,
+                                 /*no_color=*/true);
+            if (cc == 77) {
+                std::fprintf(stderr, "golden: no-color run skipped (no headless)\n");
+            } else if (cc != 0 || cw < 256 || ch < 256) {
+                std::fprintf(stderr, "golden: FAIL — no-color run exited %d / bad readback\n", cc);
+                rc = 1;
+            } else {
+                check(any_pixel(crgb, cw, ch, px0, py0, px1, py1, is_red),
+                      "no-color: no RED avatar (layer didn't add COLOR_ATTACHMENT usage?)");
+                check(any_pixel(crgb, cw, ch, px0, py0, px1, py1, is_green),
+                      "no-color: no GREEN avatar (layer didn't add COLOR_ATTACHMENT usage?)");
+                check(any_pixel(crgb, cw, ch, px0, py0, px1, py1, is_blue),
+                      "no-color: no BLUE avatar (layer didn't add COLOR_ATTACHMENT usage?)");
+                std::printf("golden: no-color — overlay renders into a swapchain created "
+                            "without color-attachment usage (DXVK fix)\n");
+            }
+            kill_and_reap(host4);
+        }
+    }
+
     if (rc == 0)
         std::puts("golden: PASS — voice panel + avatars + speaking ring + mute glyph drawn; "
                   "avatars survive recreate; sRGB colors accurate; placeholder silhouette "
-                  "for avatar-less users; notification toast with icon; nothing drawn "
-                  "without a host");
+                  "for avatar-less users; notification toast with icon; overlay works on a "
+                  "no-color-attachment swapchain; nothing drawn without a host");
     return rc;
 }

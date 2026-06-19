@@ -171,6 +171,15 @@ test('srgb',
   ),
 )
 
+# Layer swapchain usage-bit injection (pure; includes src/layer/swapchain_usage.hpp).
+test('swapchain_usage',
+  executable('t_swapchain_usage',
+    'layer/test_swapchain_usage.cpp',
+    include_directories: layer_inc,
+    dependencies: [dependency('vulkan')],
+  ),
+)
+
 layer_dir = meson.current_build_dir() / '..' / 'src' / 'layer'
 # Point XDG_DATA_HOME at an empty dir so the loader does NOT discover a globally
 # *installed* choir implicit layer (~/.local/share/vulkan/implicit_layer.d) — which

@@ -75,15 +75,18 @@ int main(int argc, char** argv) {
     bool layer_info = false;
     bool recreate = false;  // recreate the swapchain once via oldSwapchain before presenting
     bool want_srgb = false; // prefer an _SRGB swapchain format (to test the layer's sRGB path)
+    bool no_color = false;  // create the swapchain WITHOUT color-attachment usage (simulates
+                            // DXVK's D3D11 blit-present path; the layer must add it back)
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) frames = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--readback") == 0 && i + 1 < argc) readback = argv[++i];
         else if (std::strcmp(argv[i], "--layer-info") == 0) layer_info = true;
         else if (std::strcmp(argv[i], "--recreate") == 0) recreate = true;
         else if (std::strcmp(argv[i], "--srgb") == 0) want_srgb = true;
+        else if (std::strcmp(argv[i], "--no-color-usage") == 0) no_color = true;
         else if (std::strcmp(argv[i], "--help") == 0) {
             std::puts("vk_min_present [--frames N] [--readback OUT.ppm] [--layer-info] "
-                      "[--recreate] [--srgb]");
+                      "[--recreate] [--srgb] [--no-color-usage]");
             return 0;
         }
     }
@@ -216,8 +219,12 @@ int main(int argc, char** argv) {
     swci.imageColorSpace = chosen.colorSpace;
     swci.imageExtent = extent;
     swci.imageArrayLayers = 1;
-    swci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                      VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    // We clear via vkCmdClearColorImage and read back via vkCmdCopyImageToBuffer — both
+    // transfer ops — so this app needs only TRANSFER usage, not COLOR_ATTACHMENT. With
+    // --no-color-usage we drop the color bit to mimic DXVK's D3D11 swapchains: the layer
+    // must add it back, or its render pass into these images faults the GPU.
+    swci.imageUsage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    if (!no_color) swci.imageUsage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     swci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     swci.preTransform = caps.currentTransform;
     swci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;

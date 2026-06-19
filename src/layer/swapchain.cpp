@@ -14,6 +14,7 @@
 #include "gating.hpp"
 #include "imgui_renderer.hpp"
 #include "state_client.hpp"
+#include "swapchain_usage.hpp"
 
 namespace choir {
 namespace {
@@ -434,10 +435,31 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device,
 
     VkSwapchainKHR old = pCreateInfo ? pCreateInfo->oldSwapchain : VK_NULL_HANDLE;
 
+    // The overlay renders into the swapchain images as a COLOR attachment, so the
+    // swapchain must be created with VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT. Some apps omit
+    // it (e.g. DXVK's D3D11 blit-present path) — rendering into such images then corrupts
+    // the GPU (NVIDIA Xid 13/32 -> device lost). Add it on a COPY of the create-info, like
+    // MangoHud (see swapchain_usage.hpp). `overlay_capable` tracks whether the swapchain we
+    // actually created carries the bit; build_state (which makes the framebuffers we render
+    // into) runs ONLY when it does, so we can never render into a non-attachment image.
+    VkSwapchainCreateInfoKHR overlay_ci = *pCreateInfo;
+    overlay_ci.imageUsage = overlay_swapchain_usage(pCreateInfo->imageUsage);
+
     // Create the REAL swapchain first and unconditionally — this is the app's, and it
     // must succeed regardless of any overlay bookkeeping. Returned before any overlay
     // work that could throw.
-    VkResult res = dd->disp.CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
+    VkResult res = dd->disp.CreateSwapchainKHR(device, &overlay_ci, pAllocator, pSwapchain);
+    bool overlay_capable =
+        res == VK_SUCCESS && (overlay_ci.imageUsage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+    if (res != VK_SUCCESS && overlay_ci.imageUsage != pCreateInfo->imageUsage) {
+        // Our added usage bit was the only change; if the driver rejected it (only
+        // possible on exotic shared-present surfaces that don't advertise color-attachment
+        // support), retry with the app's EXACT request so the app's swapchain still
+        // succeeds. The overlay simply won't render into this one (overlay_capable stays
+        // false -> build_state skipped -> present forwards).
+        res = dd->disp.CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
+        overlay_capable = false;
+    }
     if (res != VK_SUCCESS) return res;
 
     // ENTRYPOINT CATCH-ALL (Task 18): everything below is overlay bookkeeping. If it
@@ -473,8 +495,10 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device,
         s.format = pCreateInfo->imageFormat;
         s.extent = pCreateInfo->imageExtent;
         // build_state may fail (leaves s.ok == false); we still store it so present can
-        // see "tracked but not drawable" and fall back, and so destroy cleans up.
-        build_state(s, *pSwapchain);
+        // see "tracked but not drawable" and fall back, and so destroy cleans up. Skip it
+        // entirely when the swapchain lacks color-attachment usage (see above): rendering
+        // into those images would fault the GPU, so we leave s.ok == false and forward.
+        if (overlay_capable) build_state(s, *pSwapchain);
         {
             std::lock_guard<std::mutex> g(g_sc_lock);
             g_swapchains[*pSwapchain] = std::move(s);
