@@ -120,6 +120,22 @@ void draw_deaf(ImDrawList* dl, float cx, float cy, float r, float a) {
     dl->AddLine(ImVec2(cx - r, cy - r), ImVec2(cx + r, cy + r), slash, 2.0f);
 }
 
+// Draw a generic "person" silhouette (head + shoulders) centered at (cx,cy) within
+// radius r — the placeholder shown when a participant has no avatar image. Pure
+// draw-list primitives, tinted lighter than the disc behind it so it reads as a figure.
+void draw_user_glyph(ImDrawList* dl, float cx, float cy, float r, float a) {
+    const ImU32 fg = scale_alpha(IM_COL32(176, 181, 191, 255), a);
+    // Head: a filled circle in the upper half.
+    dl->AddCircleFilled(ImVec2(cx, cy - r * 0.28f), r * 0.32f, fg, 24);
+    // Shoulders: the top half of a wider disc (a filled dome) just below the head. The
+    // arc runs left->top->right; PathFillConvex closes it with the bottom chord. Both
+    // shapes fit inside radius r, so they never spill past the placeholder disc.
+    const float sr = r * 0.58f;
+    const ImVec2 sc(cx, cy + r * 0.62f);
+    dl->PathArcTo(sc, sr, kPi, 2.0f * kPi, 24);
+    dl->PathFillConvex(fg);
+}
+
 // Resolve a participant's avatar texture, loading it on demand from the retained map
 // if not yet cached (this is what makes avatars survive a swapchain recreate).
 ImTextureID resolve_avatar(const Participant& p, AvatarTextures& textures,
@@ -222,9 +238,10 @@ void draw_voice_panel(const Snapshot& snap, AvatarTextures& textures, StateClien
                                     ImVec2(0, 0), ImVec2(1, 1), scale_alpha(IM_COL32_WHITE, a),
                                     radius);
             } else {
-                // Neutral placeholder circle when the texture isn't available.
+                // No avatar image: a neutral disc with a generic person silhouette.
                 dl->AddCircleFilled(ImVec2(cx, cy), radius,
                                     scale_alpha(IM_COL32(70, 74, 82, 255), a), 24);
+                draw_user_glyph(dl, cx, cy, radius, a);
             }
 
             // Speaking indicator: a bright green ring around the avatar (fades in too).

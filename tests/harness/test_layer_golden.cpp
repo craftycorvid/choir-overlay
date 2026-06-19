@@ -80,6 +80,13 @@ bool is_red(RGB p) { return p.r > 150 && p.g < 120 && p.b < 120; }
 bool is_green(RGB p) { return p.g > 150 && p.r < 120 && p.b < 120; }
 bool is_blue(RGB p) { return p.b > 150 && p.r > 45 && p.r < 120 && p.g > 45 && p.g < 120; }
 
+// The generic-user placeholder silhouette: a light, near-neutral grey (176,181,191) —
+// well above the dark placeholder disc (70,74,82) and below the white name text (~235),
+// with all three channels close together (it is grey, not a colored avatar).
+bool is_silhouette(RGB p) {
+    return near(p.r, 176, 30) && near(p.g, 181, 30) && near(p.b, 191, 30);
+}
+
 // Does any pixel in [x0,x1)x[y0,y1) satisfy `pred`?
 template <typename Pred>
 bool any_pixel(const std::vector<uint8_t>& rgb, uint32_t w, uint32_t h, uint32_t x0,
@@ -112,7 +119,7 @@ int run_child(const char* path, const char* const argv[],
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
-pid_t spawn_fake_host(const char* path, const std::string& cache) {
+pid_t spawn_fake_host(const char* path, const std::string& cache, const char* extra = nullptr) {
     pid_t pid = ::fork();
     if (pid < 0) return -1;
     if (pid == 0) {
@@ -120,9 +127,11 @@ pid_t spawn_fake_host(const char* path, const std::string& cache) {
         // --all-speaking: every indicator is at FULL alpha so the per-color avatar checks
         // are reliable (non-speaking indicators are dimmed and blend toward the blue clear,
         // which is unpredictable in pixel space; the dim/fade easing is unit-tested in
-        // test_fade instead).
-        const char* argv[] = {path, "--cache-dir", cache.c_str(), "--all-speaking", nullptr};
-        ::execv(path, const_cast<char* const*>(argv));
+        // test_fade instead). `extra` passes one more flag (e.g. --no-avatar) when set.
+        std::vector<const char*> argv = {path, "--cache-dir", cache.c_str(), "--all-speaking"};
+        if (extra) argv.push_back(extra);
+        argv.push_back(nullptr);
+        ::execv(path, const_cast<char* const*>(argv.data()));
         ::_exit(127);
     }
     return pid;
@@ -343,8 +352,43 @@ int main(int argc, char** argv) {
         }
     }
 
+    // =========================================================================
+    // Phase 5: NO-AVATAR PLACEHOLDER — Carol has an empty avatar_hash, so the layer must
+    // draw the generic person silhouette (a light-grey head + shoulders) instead of an
+    // image. A fresh fake_host with --no-avatar serves this; the silhouette grey must
+    // appear in the panel region.
+    // =========================================================================
+    {
+        pid_t host2 = spawn_fake_host(fake_host.c_str(), cache, "--no-avatar");
+        if (host2 < 0) {
+            std::fprintf(stderr, "golden: FAIL — failed to spawn fake_host (--no-avatar)\n");
+            rc = 1;
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));  // let it bind
+            uint32_t pw = 0, ph = 0;
+            std::vector<uint8_t> prgb;
+            int cp = run_present(false, layer_env, pw, ph, prgb);
+            if (cp == 77) {
+                std::fprintf(stderr, "golden: no-avatar run skipped (no headless)\n");
+            } else if (cp != 0 || pw < 256 || ph < 256) {
+                std::fprintf(stderr, "golden: FAIL — no-avatar run exited %d / bad readback\n", cp);
+                rc = 1;
+            } else {
+                // Search ONLY the avatar column (x[20,60)) — not the full panel. The
+                // silhouette sits inside the avatar disc (~x37..55); the white name text
+                // is further right (x>=72) and its anti-aliased edges over the dark pill
+                // can produce mid-greys that would falsely satisfy is_silhouette.
+                check(any_pixel(prgb, pw, ph, px0, py0, 60, py1, is_silhouette),
+                      "no-avatar: no generic person silhouette drawn for avatar-less user");
+                std::printf("golden: no-avatar — generic person silhouette drawn (placeholder)\n");
+            }
+            kill_and_reap(host2);
+        }
+    }
+
     if (rc == 0)
         std::puts("golden: PASS — voice panel + avatars + speaking ring + mute glyph drawn; "
-                  "avatars survive recreate; nothing drawn without a host");
+                  "avatars survive recreate; sRGB colors accurate; placeholder silhouette "
+                  "for avatar-less users; nothing drawn without a host");
     return rc;
 }

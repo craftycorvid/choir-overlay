@@ -67,6 +67,7 @@ struct Config {
     bool corrupt_avatars = false;
     bool corrupt_snapshot = false;
     bool all_speaking = false;  // mark every participant speaking (full-alpha indicators)
+    bool no_avatar = false;     // give Carol an empty avatar_hash -> placeholder silhouette
     int flap = 0;  // 0 = no flapping; N = N alternating in_voice snapshots after the first
 };
 
@@ -97,7 +98,8 @@ bool write_corrupt_avatar(const std::string& dir, const TestAvatar& a) {
     return static_cast<bool>(f);
 }
 
-choir::Snapshot make_snapshot(bool in_voice, uint64_t revision, bool all_speaking = false) {
+choir::Snapshot make_snapshot(bool in_voice, uint64_t revision, bool all_speaking = false,
+                              bool no_avatar = false) {
     choir::Snapshot s;
     s.in_voice = in_voice;
     s.channel_name = "Test Voice";
@@ -111,6 +113,9 @@ choir::Snapshot make_snapshot(bool in_voice, uint64_t revision, bool all_speakin
     choir::Participant p2;
     p2.user_id = "3"; p2.display_name = "Carol"; p2.avatar_hash = "avatarC"; p2.self_mute = true;
     p2.speaking = all_speaking;
+    // Avatar-less participant: an empty hash makes the layer draw its generic person
+    // silhouette placeholder instead of an image.
+    if (no_avatar) p2.avatar_hash.clear();
     s.participants = {p0, p1, p2};
     return s;
 }
@@ -128,7 +133,9 @@ bool send_snapshot_and_avatars(int fd, const Config& cfg) {
     }
 
     std::string snap_json;
-    choir::to_json_str(make_snapshot(/*in_voice=*/true, /*revision=*/1, cfg.all_speaking), snap_json);
+    choir::to_json_str(
+        make_snapshot(/*in_voice=*/true, /*revision=*/1, cfg.all_speaking, cfg.no_avatar),
+        snap_json);
     if (!choir::write_frame(fd, choir::MsgType::Snapshot, snap_json)) return false;
 
     for (const auto& a : kAvatars) {
@@ -200,10 +207,12 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--corrupt-avatars") == 0) cfg.corrupt_avatars = true;
         else if (std::strcmp(argv[i], "--corrupt-snapshot") == 0) cfg.corrupt_snapshot = true;
         else if (std::strcmp(argv[i], "--all-speaking") == 0) cfg.all_speaking = true;
+        else if (std::strcmp(argv[i], "--no-avatar") == 0) cfg.no_avatar = true;
         else if (std::strcmp(argv[i], "--flap") == 0 && i + 1 < argc) cfg.flap = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--help") == 0) {
             std::puts("fake_host [--name ABSTRACT_NAME] [--cache-dir DIR] [--once] "
-                      "[--corrupt-avatars] [--corrupt-snapshot] [--all-speaking] [--flap N]");
+                      "[--corrupt-avatars] [--corrupt-snapshot] [--all-speaking] "
+                      "[--no-avatar] [--flap N]");
             return 0;
         }
     }
