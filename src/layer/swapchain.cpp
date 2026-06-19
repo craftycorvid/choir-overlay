@@ -14,25 +14,11 @@
 #include "gating.hpp"
 #include "imgui_renderer.hpp"
 #include "state_client.hpp"
+#include "swapchain_color.hpp"
 #include "swapchain_usage.hpp"
 
 namespace choir {
 namespace {
-
-// True for swapchain formats that apply the sRGB transfer function on store, so the
-// overlay must pre-convert its colors (see srgb.hpp / imgui_renderer / avatar_textures).
-bool is_srgb_format(VkFormat f) {
-    switch (f) {
-        case VK_FORMAT_R8G8B8A8_SRGB:
-        case VK_FORMAT_B8G8R8A8_SRGB:
-        case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
-        case VK_FORMAT_R8G8B8_SRGB:
-        case VK_FORMAT_B8G8R8_SRGB:
-            return true;
-        default:
-            return false;
-    }
-}
 
 // Per-swapchain-image overlay resources. One command buffer + fence + semaphore
 // per image so a buffer still in flight (FIFO can have several frames queued) is
@@ -60,6 +46,7 @@ struct SwapchainState {
     VkDevice device = VK_NULL_HANDLE;
     DeviceData* dd = nullptr;  // stable for device lifetime; entry lives in dispatch map
     VkFormat format = VK_FORMAT_UNDEFINED;
+    VkColorSpaceKHR color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
     VkExtent2D extent{0, 0};
     VkRenderPass render_pass = VK_NULL_HANDLE;
     VkCommandPool pool = VK_NULL_HANDLE;
@@ -313,7 +300,8 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
         if (!s.imgui->init(s.dd->instance, s.dd->physical_device, s.device,
                            s.dd->graphics_queue_family, s.dd->graphics_queue,
                            s.render_pass, static_cast<uint32_t>(s.images.size()),
-                           s.dd->api_version, is_srgb_format(s.format), s.dd->instance_gipa,
+                           s.dd->api_version,
+                           needs_srgb_conversion(s.format, s.color_space), s.dd->instance_gipa,
                            d)) {
             s.imgui.reset();  // not ready — overlay draws nothing this swapchain
         }
@@ -330,7 +318,7 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
     // the renderer's device + descriptor pool). Created once per swapchain.
     if (renderer_ready && !s.avatars) {
         s.avatars = std::make_unique<AvatarTextures>();
-        s.avatars->init(s.imgui.get(), is_srgb_format(s.format));
+        s.avatars->init(s.imgui.get(), needs_srgb_conversion(s.format, s.color_space));
     }
 
     // Build the ImGui draw list for this frame BEFORE recording the render pass
@@ -487,7 +475,22 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device,
         s.device = device;
         s.dd = dd;
         s.format = pCreateInfo->imageFormat;
+        s.color_space = pCreateInfo->imageColorSpace;
         s.extent = pCreateInfo->imageExtent;
+
+        // Diagnostics: dump the swapchain's color format/space and how we'll treat it.
+        // Set CHOIR_DEBUG_FORMAT=1 and launch the game to learn what it actually uses
+        // (e.g. an HDR scRGB swapchain that needs sRGB->linear conversion).
+        if (const char* dbg = ::getenv("CHOIR_DEBUG_FORMAT"); dbg && *dbg) {
+            std::fprintf(stderr,
+                         "[choir] swapchain format=%d colorspace=%d (%s) -> srgb_convert=%s%s\n",
+                         static_cast<int>(s.format), static_cast<int>(s.color_space),
+                         colorspace_name(s.color_space),
+                         needs_srgb_conversion(s.format, s.color_space) ? "yes" : "no",
+                         is_unhandled_hdr(s.color_space) ? " [UNHANDLED HDR transfer]" : "");
+            std::fflush(stderr);
+        }
+
         // build_state may fail (leaves s.ok == false); we still store it so present can
         // see "tracked but not drawable" and fall back, and so destroy cleans up. Skip it
         // entirely when the swapchain lacks color-attachment usage (see above): rendering
