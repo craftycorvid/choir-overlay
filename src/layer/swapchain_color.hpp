@@ -20,7 +20,6 @@
 #include <vulkan/vulkan.h>
 
 #include <cmath>
-#include <cstdint>
 
 namespace choir {
 

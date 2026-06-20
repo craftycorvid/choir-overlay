@@ -20,6 +20,17 @@
 namespace choir {
 namespace {
 
+// Overlay paper-white target in cd/m^2 for HDR swapchains (scRGB scale + PQ targetL).
+// Default 200; override with CHOIR_HDR_NITS, clamped to a sane [80, 1000].
+float hdr_nits() {
+    float n = 200.0f;
+    if (const char* e = ::getenv("CHOIR_HDR_NITS"); e && *e) {
+        float v = std::strtof(e, nullptr);
+        if (v >= 80.0f && v <= 1000.0f) n = v;
+    }
+    return n;
+}
+
 // Per-swapchain-image overlay resources. One command buffer + fence + semaphore
 // per image so a buffer still in flight (FIFO can have several frames queued) is
 // never re-recorded before its prior submit finishes.
@@ -335,8 +346,8 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
                            s.dd->graphics_queue_family, s.dd->graphics_queue,
                            s.render_pass, static_cast<uint32_t>(s.images.size()),
                            s.dd->api_version,
-                           transfer_function_for(s.format, s.color_space), s.dd->instance_gipa,
-                           d)) {
+                           transfer_function_for(s.format, s.color_space), hdr_nits(),
+                           s.dd->instance_gipa, d)) {
             s.imgui.reset();  // not ready — overlay draws nothing this swapchain
         }
         if (const char* dbg = ::getenv("CHOIR_DEBUG_LAZY_INIT"); dbg && *dbg) {
@@ -352,10 +363,9 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
     // the renderer's device + descriptor pool). Created once per swapchain.
     if (renderer_ready && !s.avatars) {
         s.avatars = std::make_unique<AvatarTextures>();
-        // Avatars decode via an _SRGB image format whenever we apply any transfer (the
-        // sampled value must be linear before the transfer math); raw UNORM only for None.
-        s.avatars->init(s.imgui.get(),
-                        transfer_function_for(s.format, s.color_space) != TransferFunction::None);
+        // Avatars upload as raw UNORM; the overlay's HDR fragment shader applies the
+        // transfer (sRGB->linear + HDR) to the final color, icons included.
+        s.avatars->init(s.imgui.get());
     }
 
     // Build the ImGui draw list for this frame BEFORE recording the render pass
@@ -519,11 +529,12 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device,
         // we'll apply to the overlay. Set CHOIR_DEBUG_FORMAT=1 and launch the game to see
         // what it actually uses.
         if (const char* dbg = ::getenv("CHOIR_DEBUG_FORMAT"); dbg && *dbg) {
+            const TransferFunction tf = transfer_function_for(s.format, s.color_space);
             std::fprintf(stderr,
-                         "[choir] swapchain format=%d colorspace=%d (%s) -> transfer=%s\n",
+                         "[choir] swapchain format=%d colorspace=%d (%s) -> transfer=%s nits=%.0f\n",
                          static_cast<int>(s.format), static_cast<int>(s.color_space),
-                         colorspace_name(s.color_space),
-                         transfer_name(transfer_function_for(s.format, s.color_space)));
+                         colorspace_name(s.color_space), transfer_name(tf),
+                         tf == TransferFunction::None ? 0.0f : hdr_nits());
             std::fflush(stderr);
         }
 
