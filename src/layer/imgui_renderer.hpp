@@ -62,8 +62,8 @@ public:
     // display correctly. None leaves colors untouched.
     bool init(VkInstance inst, VkPhysicalDevice phys, VkDevice dev, uint32_t queue_family,
               VkQueue queue, VkRenderPass render_pass, uint32_t image_count,
-              uint32_t api_version, TransferFunction transfer, PFN_vkGetInstanceProcAddr gipa,
-              const DeviceDispatch& disp);
+              uint32_t api_version, TransferFunction transfer, float nits,
+              PFN_vkGetInstanceProcAddr gipa, const DeviceDispatch& disp);
 
     // Begin and build a frame for the given framebuffer extent: NewFrame -> draw the
     // real overlay (voice panel + toasts) from `snap` -> Render. No platform backend,
@@ -113,6 +113,8 @@ private:
     bool init_done_ = false;
     bool frame_started_ = false;  // begin_frame called this present, end_frame pending
     TransferFunction transfer_ = TransferFunction::None;  // swapchain color transfer fn
+    float nits_ = 200.0f;
+    VkPipeline hdr_pipeline_ = VK_NULL_HANDLE;
     ImGuiContext* ctx_ = nullptr;
     VkDevice device_ = VK_NULL_HANDLE;
     VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE;
