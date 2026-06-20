@@ -1,0 +1,59 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-20-hdr-overlay-shader.md",
+  "tasks": [
+    {
+      "id": 0,
+      "nativeId": 30,
+      "subject": "Task 1: Color model — five transfer modes + nits",
+      "status": "pending",
+      "description": "**Goal:** swapchain_color.hpp exposes a 5-value TransferFunction (adds ScRgb), re-adds is_hdr_float_format, maps PASS_THROUGH+float and EXTENDED_SRGB_LINEAR to ScRgb, and the transfer math takes a nits arg.\n\n**Files:** Modify src/layer/swapchain_color.hpp; Test tests/layer/test_swapchain_color.cpp\n\n**Verify:** meson test -C build swapchain_color\n\n```json:metadata\n{\"files\": [\"src/layer/swapchain_color.hpp\", \"tests/layer/test_swapchain_color.cpp\"], \"verifyCommand\": \"meson test -C build swapchain_color\", \"acceptanceCriteria\": [\"TransferFunction is {None,Srgb,ScRgb,Pq,Hlg}\", \"PASS_THROUGH+float -> ScRgb\", \"EXTENDED_SRGB_LINEAR -> ScRgb\", \"HDR10_ST2084 -> Pq\", \"_SRGB format -> Srgb\", \"UNORM+SRGB_NONLINEAR -> None\", \"apply_transfer(ScRgb,200) scales by 2.5\"]}\n```"
+    },
+    {
+      "id": 1,
+      "nativeId": 31,
+      "subject": "Task 2: HDR fragment shader (GLSL + generated SPIR-V header)",
+      "status": "pending",
+      "description": "**Goal:** Fragment shader applying the per-mode transfer to the final fragment color, compiled to an embedded SPIR-V header.\n\n**Files:** Create src/layer/shaders/overlay_hdr.frag; Create src/layer/shaders/overlay_hdr.frag.spv.h\n\n**Verify:** glslangValidator -V src/layer/shaders/overlay_hdr.frag -o /tmp/t.spv\n\n```json:metadata\n{\"files\": [\"src/layer/shaders/overlay_hdr.frag\", \"src/layer/shaders/overlay_hdr.frag.spv.h\"], \"verifyCommand\": \"glslangValidator -V src/layer/shaders/overlay_hdr.frag -o /tmp/t.spv\", \"acceptanceCriteria\": [\"GLSL compiles with no errors\", \"header defines choir_overlay_hdr_frag_spv[]\"]}\n```"
+    },
+    {
+      "id": 2,
+      "nativeId": 32,
+      "subject": "Task 3: Unity-TU HDR pipeline helper",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** choir::create_hdr_pipeline (in our unity TU, no vendored edits) reuses ImGui's vertex shader + pipeline layout to build a custom HDR pipeline.\n\n**Files:** Create src/layer/imgui_vk_backend.hpp; Modify src/layer/imgui_impl_vulkan_unity.cpp\n\n**Verify:** meson compile -C build\n\n```json:metadata\n{\"files\": [\"src/layer/imgui_vk_backend.hpp\", \"src/layer/imgui_impl_vulkan_unity.cpp\"], \"verifyCommand\": \"meson compile -C build\", \"acceptanceCriteria\": [\"create_hdr_pipeline returns non-null for valid render pass after init\", \"no edits under subprojects/\"]}\n```"
+    },
+    {
+      "id": 3,
+      "nativeId": 33,
+      "subject": "Task 4: Renderer — create/use/destroy the HDR pipeline",
+      "status": "pending",
+      "blockedBy": [0, 2],
+      "description": "**Goal:** ImguiRenderer::init takes (TransferFunction, nits), builds the HDR pipeline when transfer != None, draws with it via RenderDrawData(...,hdr_pipeline_), removes the CPU vertex transform, destroys the pipeline on shutdown.\n\n**Files:** Modify src/layer/imgui_renderer.hpp, src/layer/imgui_renderer.cpp\n\n**Verify:** meson compile -C build\n\n```json:metadata\n{\"files\": [\"src/layer/imgui_renderer.hpp\", \"src/layer/imgui_renderer.cpp\"], \"verifyCommand\": \"meson compile -C build\", \"acceptanceCriteria\": [\"init takes (transfer, nits)\", \"hdr_pipeline_ created when transfer != None\", \"end_frame uses hdr_pipeline_ when set else 2-arg\", \"apply_transfer_u8 loop removed\", \"shutdown destroys hdr_pipeline_\"]}\n```"
+    },
+    {
+      "id": 4,
+      "nativeId": 34,
+      "subject": "Task 5: Avatars always UNORM",
+      "status": "pending",
+      "description": "**Goal:** Avatar textures always R8G8B8A8_UNORM; drop the srgb param and _SRGB branching so the shader handles transfer uniformly.\n\n**Files:** Modify src/layer/avatar_textures.hpp, src/layer/avatar_textures.cpp\n\n**Verify:** meson compile -C build (with Task 6)\n\n```json:metadata\n{\"files\": [\"src/layer/avatar_textures.hpp\", \"src/layer/avatar_textures.cpp\"], \"verifyCommand\": \"meson compile -C build\", \"acceptanceCriteria\": [\"init(ImguiRenderer*) no bool srgb\", \"create_texture always R8G8B8A8_UNORM\", \"srgb_ member removed\"]}\n```"
+    },
+    {
+      "id": 5,
+      "nativeId": 35,
+      "subject": "Task 6: Swapchain wiring + nits env + full suite",
+      "status": "pending",
+      "blockedBy": [0, 3, 4],
+      "description": "**Goal:** swapchain.cpp computes the transfer, reads CHOIR_HDR_NITS (default 200, clamp [80,1000]), passes (transfer, nits) to imgui->init and calls avatars->init(renderer); debug log shows transfer + nits; full suite green.\n\n**Files:** Modify src/layer/swapchain.cpp\n\n**Verify:** meson test -C build → Fail: 0\n\n```json:metadata\n{\"files\": [\"src/layer/swapchain.cpp\"], \"verifyCommand\": \"meson test -C build\", \"acceptanceCriteria\": [\"imgui->init gets transfer + nits\", \"avatars->init(s.imgui.get()) no bool\", \"CHOIR_HDR_NITS clamped [80,1000] default 200\", \"CHOIR_DEBUG_FORMAT logs transfer + nits\", \"full suite Fail: 0\"]}\n```"
+    },
+    {
+      "id": 6,
+      "nativeId": 36,
+      "subject": "Task 7: Reinstall + manual HDR verification",
+      "status": "pending",
+      "blockedBy": [5],
+      "description": "**Goal:** Install the rebuilt layer and confirm in real HDR games the overlay has correct color AND readable brightness.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.** Close only after every acceptanceCriteria item is re-validated independently with output captured.\n\n**Files:** none (install + manual test)\n\n**Verify:** user launches Overwatch (scRGB) + Cyberpunk (PQ) in HDR, inspects overlay + ~/choir.log.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"bash packaging/install-user.sh\", \"acceptanceCriteria\": [\"install-user.sh reports installed\", \"Overwatch HDR: transfer=scrgb, overlay not washed out, bright/readable\", \"Cyberpunk HDR: transfer=pq, correct saturation, readable\", \"CHOIR_HDR_NITS visibly changes brightness\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"requiresUserSpecification\": false, \"gateScope\": \"manual-visual\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-20"
+}
