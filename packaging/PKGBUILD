@@ -6,14 +6,14 @@
 # This sources the working tree this PKGBUILD lives in (offline: imgui + nlohmann_json are
 # vendored under subprojects/). To publish on the AUR, replace the `_srcroot` indirection
 # with a git source and add a pkgver(), e.g.:
-#   source=("git+https://github.com/craftycorvid/choir.git")
-#   pkgver() { cd "$srcdir/choir"; git describe --tags --always | sed 's/^v//;s/-/./g'; }
+#   source=("git+https://github.com/craftycorvid/choir-overlay.git")
+#   pkgver() { cd "$srcdir/choir-overlay"; git describe --tags --always | sed 's/^v//;s/-/./g'; }
 pkgname=choir
 pkgver=0.0.1
 pkgrel=1
 pkgdesc="Wayland Discord voice overlay for Vulkan games (not affiliated with Discord Inc.)"
 arch=('x86_64')
-url="https://github.com/craftycorvid/choir"
+url="https://github.com/craftycorvid/choir-overlay"
 license=('MIT')
 depends=('qt6-base' 'vulkan-icd-loader')
 makedepends=('meson' 'vulkan-headers')
