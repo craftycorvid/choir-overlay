@@ -56,10 +56,11 @@ public:
     // global loader, whose trampolines reject the unwrapped handles a layer sees.
     // Returns true on success; on failure the renderer stays not-ready() and tears
     // down cleanly.
-    // `transfer` is the swapchain's color transfer function (see swapchain_color.hpp). When
-    // it is not None, the renderer pre-converts ImGui's sRGB-authored vertex colors into
-    // that space (sRGB->linear for _SRGB/scRGB, plus BT.2020+PQ/HLG for HDR10) so they
-    // display correctly. None leaves colors untouched.
+    // `transfer` is the swapchain's color transfer function (see swapchain_color.hpp) and
+    // `nits` the HDR paper-white target. When `transfer` is not None, the renderer draws
+    // through a custom HDR pipeline whose fragment shader applies the transfer to the final
+    // color (sRGB->linear, + nits scale for scRGB, + BT.2020 + PQ/HLG for HDR10) so it
+    // displays correctly. None uses ImGui's default pipeline unchanged.
     bool init(VkInstance inst, VkPhysicalDevice phys, VkDevice dev, uint32_t queue_family,
               VkQueue queue, VkRenderPass render_pass, uint32_t image_count,
               uint32_t api_version, TransferFunction transfer, float nits,

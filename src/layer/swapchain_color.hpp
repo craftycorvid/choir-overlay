@@ -39,12 +39,14 @@ inline bool is_srgb_format(VkFormat f) {
     }
 }
 
-// True for HDR floating-point swapchain formats (used to detect scRGB under PASS_THROUGH).
+// True for the SIGNED floating-point HDR swapchain formats used to detect scRGB under
+// PASS_THROUGH. scRGB can hold values <0 and >1 (extended gamut), so only signed-float
+// formats qualify — R16G16B16A16_SFLOAT is what DXVK/VKD3D actually present. (Unsigned
+// packed floats like B10G11R11_UFLOAT can't represent scRGB negatives, so they're excluded.)
 inline bool is_hdr_float_format(VkFormat f) {
     switch (f) {
         case VK_FORMAT_R16G16B16A16_SFLOAT:
         case VK_FORMAT_R16G16B16_SFLOAT:
-        case VK_FORMAT_B10G11R11_UFLOAT_PACK32:
             return true;
         default:
             return false;
