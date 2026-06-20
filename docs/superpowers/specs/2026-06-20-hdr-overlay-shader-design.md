@@ -93,9 +93,11 @@ single source of truth, mirrored by the shader and exercised by the unit test.
   fColor = c;` where `hdr_encode` switches on `layout(constant_id=0) const int uMode` and
   uses `layout(constant_id=1) const float uNits`.
 
-Compiled to SPIR-V and embedded as `uint32_t` arrays (following the ImGui backend's own
-embedded-SPIR-V convention). Build-time compilation via glslangValidator if available;
-otherwise the generated `.spv.h` is checked in. Alpha is passed through untouched.
+Compiled to SPIR-V and embedded as `uint32_t` arrays, following the ImGui backend's own
+embedded-SPIR-V convention. The `.spv.h` headers are **generated with glslangValidator
+during development and checked in** (no build-time shader-compiler dependency, deterministic
+installs) — the GLSL sources live alongside them in `src/layer/shaders/` for review and
+regeneration. Alpha is passed through untouched.
 
 ## Renderer (`src/layer/imgui_renderer.{hpp,cpp}`)
 
@@ -126,7 +128,7 @@ otherwise the generated `.spv.h` is checked in. Alpha is passed through untouche
 ## Swapchain wiring (`src/layer/swapchain.cpp`)
 
 - Compute `TransferFunction` via `transfer_function_for(s.format, s.color_space)`.
-- Read `nits` once: `CHOIR_HDR_NITS` env (default `200.0`), clamped to a sane range.
+- Read `nits` once: `CHOIR_HDR_NITS` env (default `200.0`), clamped to `[80, 1000]`.
 - Pass `transfer` + `nits` to `imgui->init`; call `avatars->init(renderer)` (no srgb arg).
 - `CHOIR_DEBUG_FORMAT` log: add the resolved `transfer=` mode and `nits=`.
 
