@@ -37,6 +37,28 @@ subdir('src/ipc')
 subdir('src/host')
 subdir('src/layer')
 
+# --- Install-time artifacts (packaging). The layer .so + host binary are installed by
+# their own meson.build (install: true). Here we add the install-time implicit-layer
+# manifest (ABSOLUTE library_path, derived from the prefix) and the desktop entry, so
+# `meson install --prefix=X` is a complete, correct install for any X (e.g. /usr for the
+# pacman package, ~/.local for install-user.sh). This manifest is generated in the TOP
+# build dir (build/), NOT build/src/layer/, so the tests' VK_LAYER_PATH=build/src/layer
+# only ever sees the relative build-tree manifest.
+configure_file(
+  input: 'src/layer/manifest/choir_overlay.json.in',
+  output: 'choir_overlay.x86_64.json',
+  configuration: {
+    'ARCH': 'x86_64',
+    'LIBPATH': get_option('prefix') / get_option('libdir') / 'choir' / 'libchoir_overlay.so',
+  },
+  install: true,
+  install_dir: get_option('datadir') / 'vulkan' / 'implicit_layer.d',
+)
+
+# App-menu entry. Exec=choir (resolved on PATH).
+install_data('packaging/choir.desktop',
+  install_dir: get_option('datadir') / 'applications')
+
 if get_option('build_tests')
   subdir('tests')
 endif
