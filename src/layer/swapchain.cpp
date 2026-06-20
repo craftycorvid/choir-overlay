@@ -76,10 +76,29 @@ struct SwapchainState {
 std::mutex g_sc_lock;
 std::unordered_map<VkSwapchainKHR, SwapchainState> g_swapchains;
 
+// Wait until none of this swapchain's overlay command buffers are still in flight, so
+// its objects (command pool, framebuffers, views, render pass, ImGui pipelines) are safe
+// to free. We wait ONLY our own per-image fences — NOT vkDeviceWaitIdle. DeviceWaitIdle
+// requires every VkQueue to be externally synchronized, but the app (e.g. DXVK) calls
+// CreateSwapchainKHR/DestroySwapchainKHR on a different thread than vkQueuePresentKHR;
+// a device-wide wait there races the presenter's queue submits -> GPU command-stream
+// corruption (NVRM Xid 13/32 -> device lost), seen when toggling HDR (rapid recreate).
+// MangoHud likewise waits only its per-draw fences. Our fences cover exactly the work
+// that touches our objects, so this is both sufficient and race-free.
+void wait_overlay_idle(SwapchainState& s) {
+    if (!s.dd->disp.WaitForFences) return;
+    for (ImageState& img : s.images) {
+        if (img.fence_in_flight && img.fence != VK_NULL_HANDLE) {
+            s.dd->disp.WaitForFences(s.device, 1, &img.fence, VK_TRUE, UINT64_MAX);
+            img.fence_in_flight = false;
+        }
+    }
+}
+
 // Tear down all overlay Vulkan objects for one swapchain. Caller holds g_sc_lock.
-// The device must be idle (or all fences waited) before this runs. Does NOT call
-// the down-chain vkDestroySwapchainKHR — that is the app's swapchain, freed by the
-// real DestroySwapchainKHR / by recreate.
+// The overlay's command buffers must not be in flight (call wait_overlay_idle first).
+// Does NOT call the down-chain vkDestroySwapchainKHR — that is the app's swapchain, freed
+// by the real DestroySwapchainKHR / by recreate.
 void destroy_state(SwapchainState& s) {
     const DeviceDispatch& d = s.dd->disp;
     VkDevice dev = s.device;
@@ -488,7 +507,7 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device,
                 }
             }
             if (have) {
-                if (dd->disp.DeviceWaitIdle) dd->disp.DeviceWaitIdle(device);
+                wait_overlay_idle(retired);  // NOT DeviceWaitIdle — see wait_overlay_idle
                 destroy_state(retired);
             }
         }
@@ -551,9 +570,10 @@ VKAPI_ATTR void VKAPI_CALL DestroySwapchainKHR(VkDevice device, VkSwapchainKHR s
             }
         }
         if (have) {
-            // Idle so no overlay command buffer for this swapchain is in flight, then
-            // free our objects BEFORE the app's swapchain (and its images/views we view).
-            if (dd && dd->disp.DeviceWaitIdle) dd->disp.DeviceWaitIdle(device);
+            // Wait only our own overlay fences (NOT DeviceWaitIdle — see wait_overlay_idle)
+            // so no overlay command buffer is in flight, then free our objects BEFORE the
+            // app's swapchain (and its images/views we view).
+            wait_overlay_idle(s);
             destroy_state(s);
         }
     } catch (...) {
