@@ -1,7 +1,7 @@
 # Choir
 
 Choir is **an overlay for Discord** — a Wayland-only, display-only voice panel and
-notification overlay that renders *inside* Vulkan games (native, DXVK, VKD3D) via an
+notification overlay that renders _inside_ Vulkan games (native, DXVK, VKD3D) via an
 injected Vulkan implicit layer.
 
 A Qt6 host (`choir`, a tray app) owns the connection to the Discord desktop client's
@@ -20,8 +20,7 @@ is designed never to crash the game.
 - **Vulkan** (the loader + a working ICD). The overlay renders only in Vulkan games —
   native Vulkan or DXVK/VKD3D (Proton) titles. SDR and HDR (scRGB / HDR10) are both
   supported.
-- The **Discord desktop client** running (the official client, or **Vesktop**/Vencord —
-  anything that exposes the local `discord-ipc-*` socket).
+- The **Discord desktop client** running (the official client, or anything that exposes the local `discord-ipc-*` socket).
 - **Qt6** (Core, Gui, Widgets, Network) for the host.
 - 64-bit (`x86_64`).
 
@@ -35,15 +34,15 @@ bash packaging/install-user.sh
 
 Installs everything under `$HOME` and registers the Vulkan layer:
 
-| Path | What |
-| --- | --- |
-| `~/.local/bin/choir` | the Qt host (tray app) |
-| `~/.local/lib/choir/libchoir_overlay.so` | the injected Vulkan layer |
+| Path                                                               | What                        |
+| ------------------------------------------------------------------ | --------------------------- |
+| `~/.local/bin/choir`                                               | the Qt host (tray app)      |
+| `~/.local/lib/choir/libchoir_overlay.so`                           | the injected Vulkan layer   |
 | `~/.local/share/vulkan/implicit_layer.d/choir_overlay.x86_64.json` | the implicit-layer manifest |
 
 Make sure `~/.local/bin` is on your `PATH` (the installer warns you if it isn't).
 
-**Autostart (opt-in):** the host does *not* start on login by default.
+**Autostart (opt-in):** the host does _not_ start on login by default.
 
 ```sh
 bash packaging/install-user.sh --autostart
