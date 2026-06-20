@@ -1,0 +1,37 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-20-native-arch-packaging.md",
+  "tasks": [
+    {
+      "id": 0,
+      "nativeId": 37,
+      "subject": "Task 1: meson installs the layer manifest + desktop entry",
+      "status": "pending",
+      "description": "**Goal:** meson install --prefix=X emits the host binary, layer .so, the install-time layer manifest (absolute library_path), and the desktop entry, for any prefix.\n\n**Files:** Modify meson.build (top-level)\n\n**Verify:** meson install --destdir + assert 4 files & manifest path (STAGE_OK); meson test -C build Fail: 0\n\n```json:metadata\n{\"files\": [\"meson.build\"], \"verifyCommand\": \"meson install -C build --destdir=/tmp/choir-stage && meson test -C build\", \"acceptanceCriteria\": [\"4 install files present\", \"manifest library_path = /usr/lib/choir/libchoir_overlay.so\", \"install-manifest in build/ not build/src/layer/\", \"22/22 tests\"]}\n```"
+    },
+    {
+      "id": 1,
+      "nativeId": 38,
+      "subject": "Task 2: simplify install-user.sh to consume meson's manifest",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** install-user.sh drops its hand-written manifest block and relies on meson install (now emitting the ~/.local-prefixed manifest).\n\n**Files:** Modify packaging/install-user.sh\n\n**Verify:** bash packaging/install-user.sh; grep ~/.local path in manifest; vulkaninfo | grep -i choir (USER_OK)\n\n```json:metadata\n{\"files\": [\"packaging/install-user.sh\"], \"verifyCommand\": \"bash packaging/install-user.sh\", \"acceptanceCriteria\": [\"manual manifest cat block removed\", \"~/.local manifest has correct library_path\", \"vulkaninfo shows choir\"]}\n```"
+    },
+    {
+      "id": 2,
+      "nativeId": 39,
+      "subject": "Task 3: packaging/PKGBUILD (local-buildable pacman package)",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** A PKGBUILD that builds Choir offline from the local tree and packages it for pacman; makepkg produces a .pkg.tar.zst with the expected /usr tree.\n\n**Files:** Create packaging/PKGBUILD\n\n**Verify:** cd packaging && makepkg -f && pacman -Qpl choir-*.pkg.tar.zst (PKG_OK)\n\n```json:metadata\n{\"files\": [\"packaging/PKGBUILD\"], \"verifyCommand\": \"cd packaging && makepkg -f && pacman -Qpl choir-*.pkg.tar.zst\", \"acceptanceCriteria\": [\"makepkg -f builds the package\", \"pacman -Qpl lists the 4 files\", \"nothing installed to live system\"]}\n```"
+    },
+    {
+      "id": 3,
+      "nativeId": 40,
+      "subject": "Task 4: adopt + smoke-test the package via pacman (optional)",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "**Goal:** Install the built package system-wide and confirm the overlay is discoverable (user adoption check).\n\n**USER-ORDERED GATE — NON-SKIPPABLE.** Close only after every acceptanceCriteria item is re-validated independently with output captured.\n\n**Files:** none (install + manual test)\n\n**Verify:** user runs `cd packaging && makepkg -si`, then `vulkaninfo | grep -i choir`, then launches a game.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"cd packaging && makepkg -si && vulkaninfo | grep -i choir\", \"acceptanceCriteria\": [\"makepkg -si installs cleanly\", \"vulkaninfo shows choir\", \"choir launches and a game shows the overlay\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"requiresUserSpecification\": false, \"gateScope\": \"manual-adoption\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-20"
+}
