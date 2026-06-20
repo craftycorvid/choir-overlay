@@ -29,4 +29,6 @@ build() {
 
 package() {
   DESTDIR="${pkgdir}" meson install -C "${srcdir}/build"
+  # imgui links statically into the layer; drop the wrap's build-time libimgui.a.
+  rm -f "${pkgdir}/usr/lib/libimgui.a"
 }
