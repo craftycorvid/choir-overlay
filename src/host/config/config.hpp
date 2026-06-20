@@ -22,7 +22,7 @@
 namespace choir {
 
 struct Config {
-    AppearanceConfig appearance;  // overlay look (anchor/scale/opacity/...)
+    AppearanceConfig appearance;  // overlay look (anchor/scale/hdr_nits/...)
 
     // --- auth ---
     AuthMode auth_mode = AuthMode::Streamkit;       // "streamkit" / "own-app"

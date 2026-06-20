@@ -3,11 +3,11 @@
 // Settings window (Task 11).
 //
 // A QWidget settings dialog backed by choir::Config (config_path()):
-//   - appearance: anchor combo, scale + opacity sliders, show-all-members
+//   - appearance: anchor combo, scale slider, HDR nits spinbox, show-all-members
 //     checkbox, toast anchor + duration
 //   - denylist editor (one glob per line)
-//   - auth: mode selector (Streamkit / OwnApp) + client_id / client_secret
-//   - "Authorize with Discord" button -> emits authorize_requested()
+//   - auth: built but hidden (we authorize once and reuse the cached token); the
+//     "Authorize with Discord" button still emits authorize_requested() if re-shown
 //
 // Saving persists to config_path() and emits config_changed(Config) so main()
 // can push the new appearance into OverlayState and rebuild the Denylist.
@@ -56,7 +56,7 @@ private:
 
     QComboBox* anchor_ = nullptr;
     QSlider* scale_ = nullptr;
-    QSlider* opacity_ = nullptr;
+    QSpinBox* hdr_nits_ = nullptr;
     QCheckBox* show_all_ = nullptr;
     QComboBox* toast_anchor_ = nullptr;
     QSpinBox* toast_duration_ = nullptr;

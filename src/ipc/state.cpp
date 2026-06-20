@@ -63,7 +63,7 @@ void to_json(json& j, const AppearanceConfig& c) {
     j = json{
         {"anchor", c.anchor},
         {"scale", c.scale},
-        {"opacity", c.opacity},
+        {"hdr_nits", c.hdr_nits},
         {"show_all_members", c.show_all_members},
         {"toast_anchor", c.toast_anchor},
         {"toast_duration_ms", c.toast_duration_ms},
@@ -72,7 +72,8 @@ void to_json(json& j, const AppearanceConfig& c) {
 void from_json(const json& j, AppearanceConfig& c) {
     j.at("anchor").get_to(c.anchor);
     j.at("scale").get_to(c.scale);
-    j.at("opacity").get_to(c.opacity);
+    // Added after v1, so tolerate its absence in older configs/snapshots.
+    c.hdr_nits = j.value("hdr_nits", 200.0f);
     j.at("show_all_members").get_to(c.show_all_members);
     j.at("toast_anchor").get_to(c.toast_anchor);
     j.at("toast_duration_ms").get_to(c.toast_duration_ms);

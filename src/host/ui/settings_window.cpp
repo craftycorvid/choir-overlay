@@ -62,9 +62,14 @@ void SettingsWindow::build_ui() {
     scale_->setRange(50, 300);  // 0.50x .. 3.00x
     af->addRow(QStringLiteral("Scale (%)"), scale_);
 
-    opacity_ = new QSlider(Qt::Horizontal, appearance);
-    opacity_->setRange(10, 100);  // 0.10 .. 1.00
-    af->addRow(QStringLiteral("Opacity (%)"), opacity_);
+    hdr_nits_ = new QSpinBox(appearance);
+    hdr_nits_->setRange(80, 1000);
+    hdr_nits_->setSingleStep(10);
+    hdr_nits_->setSuffix(QStringLiteral(" nits"));
+    hdr_nits_->setToolTip(QStringLiteral(
+        "Overlay paper-white brightness on HDR displays (no effect in SDR). "
+        "Applies on the next game launch."));
+    af->addRow(QStringLiteral("HDR brightness"), hdr_nits_);
 
     show_all_ = new QCheckBox(QStringLiteral("Show all members (not just speakers)"),
                               appearance);
@@ -111,6 +116,9 @@ void SettingsWindow::build_ui() {
     connect(authorize, &QPushButton::clicked, this, &SettingsWindow::authorize_requested);
 
     root->addWidget(auth);
+    // Hidden: we authorize once and reuse the cached token, so the section isn't needed
+    // in the UI. Kept built + wired so it can be re-shown by deleting this line.
+    auth->setVisible(false);
 
     // --- Buttons ---
     auto* buttons = new QHBoxLayout();
@@ -125,7 +133,7 @@ void SettingsWindow::load_into_widgets() {
     const AppearanceConfig& a = cfg_.appearance;
     anchor_->setCurrentIndex(anchor_to_index(a.anchor));
     scale_->setValue(static_cast<int>(a.scale * 100.0f + 0.5f));
-    opacity_->setValue(static_cast<int>(a.opacity * 100.0f + 0.5f));
+    hdr_nits_->setValue(static_cast<int>(a.hdr_nits + 0.5f));
     show_all_->setChecked(a.show_all_members);
     toast_anchor_->setCurrentIndex(anchor_to_index(a.toast_anchor));
     toast_duration_->setValue(a.toast_duration_ms);
@@ -145,7 +153,7 @@ Config SettingsWindow::gather_from_widgets() const {
     AppearanceConfig& a = c.appearance;
     a.anchor = index_to_anchor(anchor_->currentIndex());
     a.scale = static_cast<float>(scale_->value()) / 100.0f;
-    a.opacity = static_cast<float>(opacity_->value()) / 100.0f;
+    a.hdr_nits = static_cast<float>(hdr_nits_->value());
     a.show_all_members = show_all_->isChecked();
     a.toast_anchor = index_to_anchor(toast_anchor_->currentIndex());
     a.toast_duration_ms = toast_duration_->value();

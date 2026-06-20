@@ -105,6 +105,9 @@ choir::Snapshot make_snapshot(bool in_voice, uint64_t revision, bool all_speakin
     s.in_voice = in_voice;
     s.channel_name = "Test Voice";
     s.revision = revision;
+    // Pin the panel anchor to top-right: the golden test's pixel regions assume it. (The
+    // default AppearanceConfig anchor is CenterLeft, so this must be explicit.)
+    s.config.anchor = choir::Anchor::TopRight;
 
     choir::Participant p0;
     p0.user_id = "1"; p0.display_name = "Alice"; p0.avatar_hash = "avatarA";

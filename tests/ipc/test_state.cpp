@@ -34,7 +34,7 @@ int main() {
 
     in.config.anchor = Anchor::BottomLeft;
     in.config.scale = 1.5f;
-    in.config.opacity = 0.5f;
+    in.config.hdr_nits = 350.0f;
     in.config.show_all_members = false;
     in.config.toast_anchor = Anchor::TopLeft;
     in.config.toast_duration_ms = 3000;
@@ -81,7 +81,7 @@ int main() {
     // Config (incl. enum)
     assert(out.config.anchor == Anchor::BottomLeft);
     assert(out.config.scale == 1.5f);
-    assert(out.config.opacity == 0.5f);
+    assert(out.config.hdr_nits == 350.0f);
     assert(out.config.show_all_members == false);
     assert(out.config.toast_anchor == Anchor::TopLeft);
     assert(out.config.toast_duration_ms == 3000);
@@ -107,7 +107,7 @@ int main() {
         std::string j =
             "{\"in_voice\":false,\"channel_name\":\"\",\"participants\":[],"
             "\"notifications\":[],\"config\":{\"anchor\":99,\"scale\":1.0,"
-            "\"opacity\":1.0,\"show_all_members\":true,\"toast_anchor\":1,"
+            "\"hdr_nits\":250.0,\"show_all_members\":true,\"toast_anchor\":1,"
             "\"toast_duration_ms\":5000},\"revision\":0}";
         Snapshot s;
         bool ok = from_json_str(j, s);

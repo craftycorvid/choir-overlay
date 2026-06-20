@@ -55,7 +55,8 @@ int main() {
                    c.denylist.end());
         }
         // Appearance defaults.
-        assert(c.appearance.anchor == Anchor::TopRight);
+        assert(c.appearance.anchor == Anchor::CenterLeft);
+        assert(c.appearance.hdr_nits == 200.0f);
     }
 
     // --- round-trip: appearance + auth + denylist ------------------------
@@ -63,7 +64,7 @@ int main() {
         Config c;
         c.appearance.anchor = Anchor::BottomLeft;
         c.appearance.scale = 1.5f;
-        c.appearance.opacity = 0.42f;
+        c.appearance.hdr_nits = 350.0f;
         c.appearance.show_all_members = false;
         c.appearance.toast_anchor = Anchor::BottomRight;
         c.appearance.toast_duration_ms = 8000;
@@ -80,7 +81,7 @@ int main() {
         Config r = Config::load(path);
         assert(r.appearance.anchor == Anchor::BottomLeft);
         assert(r.appearance.scale == 1.5f);
-        assert(r.appearance.opacity == 0.42f);
+        assert(r.appearance.hdr_nits == 350.0f);
         assert(r.appearance.show_all_members == false);
         assert(r.appearance.toast_anchor == Anchor::BottomRight);
         assert(r.appearance.toast_duration_ms == 8000);
@@ -135,7 +136,7 @@ int main() {
         assert(c.client_id == "partial-id");        // present field honored
         assert(c.auth_mode == AuthMode::Streamkit);  // default
         assert(c.client_secret.empty());             // default
-        assert(c.appearance.anchor == Anchor::TopRight);  // default
+        assert(c.appearance.anchor == Anchor::CenterLeft);  // default
         assert(!c.denylist.empty());                 // absent -> default denylist
     }
     {

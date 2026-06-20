@@ -269,9 +269,6 @@ void draw_voice_panel(const Snapshot& snap, AvatarTextures& textures, StateClien
 
     const ImVec2 pos = anchored_pos(cfg.anchor, extent, size, kMargin * s);
 
-    // Opacity applies to the whole panel.
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, cfg.opacity);
-
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
     if (ImGui::Begin("##choir_voice_panel", nullptr, kOverlayWindowFlags)) {
@@ -329,7 +326,6 @@ void draw_voice_panel(const Snapshot& snap, AvatarTextures& textures, StateClien
         }
     }
     ImGui::End();
-    ImGui::PopStyleVar();  // Alpha
 }
 
 // --- Notification toasts -------------------------------------------------------------
@@ -362,8 +358,6 @@ void draw_toasts(const Snapshot& snap, AvatarTextures& textures, StateClient& cl
     const float margin = kMargin * s;
     const Anchor anchor = cfg.toast_anchor;
     ImFont* font = ImGui::GetFont();
-
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, cfg.opacity);
 
     // Stack from the anchor's edge inward. For top anchors we move downward as we add
     // older toasts; for bottom anchors we move upward.
@@ -448,7 +442,6 @@ void draw_toasts(const Snapshot& snap, AvatarTextures& textures, StateClient& cl
         }
         ImGui::End();
     }
-    ImGui::PopStyleVar();  // Alpha
 }
 
 }  // namespace

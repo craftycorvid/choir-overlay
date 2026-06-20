@@ -21,14 +21,15 @@ namespace choir {
 namespace {
 
 // Overlay paper-white target in cd/m^2 for HDR swapchains (scRGB scale + PQ targetL).
-// Default 200; override with CHOIR_HDR_NITS, clamped to a sane [80, 1000].
-float hdr_nits() {
-    float n = 200.0f;
+// Comes from the host's AppearanceConfig (`cfg_nits`); CHOIR_HDR_NITS overrides it for
+// testing. Both are clamped to a sane [80, 1000], defaulting to 200.
+float hdr_nits(float cfg_nits) {
     if (const char* e = ::getenv("CHOIR_HDR_NITS"); e && *e) {
         float v = std::strtof(e, nullptr);
-        if (v >= 80.0f && v <= 1000.0f) n = v;
+        if (v >= 80.0f && v <= 1000.0f) return v;
     }
-    return n;
+    if (cfg_nits >= 80.0f && cfg_nits <= 1000.0f) return cfg_nits;
+    return 200.0f;
 }
 
 // Per-swapchain-image overlay resources. One command buffer + fence + semaphore
@@ -346,7 +347,8 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
                            s.dd->graphics_queue_family, s.dd->graphics_queue,
                            s.render_pass, static_cast<uint32_t>(s.images.size()),
                            s.dd->api_version,
-                           transfer_function_for(s.format, s.color_space), hdr_nits(),
+                           transfer_function_for(s.format, s.color_space),
+                           hdr_nits(snapshot->config.hdr_nits),
                            s.dd->instance_gipa, d)) {
             s.imgui.reset();  // not ready — overlay draws nothing this swapchain
         }
@@ -527,14 +529,15 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device,
 
         // Diagnostics: dump the swapchain's color format/space and the transfer function
         // we'll apply to the overlay. Set CHOIR_DEBUG_FORMAT=1 and launch the game to see
-        // what it actually uses.
+        // what it actually uses. (The real nits come from the host config at present time;
+        // here we only know the env override / default, shown as a hint.)
         if (const char* dbg = ::getenv("CHOIR_DEBUG_FORMAT"); dbg && *dbg) {
             const TransferFunction tf = transfer_function_for(s.format, s.color_space);
             std::fprintf(stderr,
-                         "[choir] swapchain format=%d colorspace=%d (%s) -> transfer=%s nits=%.0f\n",
+                         "[choir] swapchain format=%d colorspace=%d (%s) -> transfer=%s nits~=%.0f\n",
                          static_cast<int>(s.format), static_cast<int>(s.color_space),
                          colorspace_name(s.color_space), transfer_name(tf),
-                         tf == TransferFunction::None ? 0.0f : hdr_nits());
+                         tf == TransferFunction::None ? 0.0f : hdr_nits(200.0f));
             std::fflush(stderr);
         }
 

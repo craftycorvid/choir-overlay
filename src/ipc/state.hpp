@@ -30,9 +30,9 @@ struct Notification {
 };
 
 struct AppearanceConfig {
-    Anchor  anchor           = Anchor::TopRight;
+    Anchor  anchor           = Anchor::CenterLeft;
     float   scale            = 1.0f;
-    float   opacity          = 0.90f;
+    float   hdr_nits         = 200.0f;   // HDR paper-white target (cd/m^2); see swapchain_color
     bool    show_all_members = true;     // false => only currently-speaking members
     Anchor  toast_anchor     = Anchor::TopRight;
     int     toast_duration_ms = 5000;

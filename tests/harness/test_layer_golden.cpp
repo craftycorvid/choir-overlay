@@ -5,7 +5,7 @@
 // avatar + self_mute) and reads back the presented PPM, asserting feature-based checks
 // (NOT a brittle full-image golden):
 //
-//   IN VOICE (fake_host connected, default config = TopRight anchor):
+//   IN VOICE (fake_host connected, panel anchor pinned to TopRight):
 //     * the panel region differs from the app's blue clear (the overlay drew),
 //     * each of the three avatar colors (red, green, blue) appears in the panel region
 //       (proving avatars resolved from the retention map + drew),
@@ -242,8 +242,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Default config anchor = TopRight; extent 256 => panel spans x[20..240], rows from
-    // the top. Avatars sit at the panel's left inner edge near x=30..62, stacked:
+    // fake_host pins the panel anchor to TopRight; extent 256 => panel spans x[20..240],
+    // rows from the top. Avatars sit at the panel's left inner edge near x=30..62, stacked:
     // Alice (red) ~y50-78, Bob (green) ~y86-118, Carol (blue) ~y130-158. We scan the
     // whole top-left quadrant of the panel for robustness against minor layout drift.
     const uint32_t px0 = 20, py0 = 20, px1 = 130, py1 = 200;  // panel rows region

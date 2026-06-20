@@ -234,7 +234,7 @@ static void test_set_config() {
     AppearanceConfig cfg;
     cfg.anchor = Anchor::BottomLeft;
     cfg.scale = 2.0f;
-    cfg.opacity = 0.5f;
+    cfg.hdr_nits = 350.0f;
     cfg.show_all_members = false;
     cfg.toast_duration_ms = 1234;
     st.set_config(cfg);
