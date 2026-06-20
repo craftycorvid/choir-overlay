@@ -27,6 +27,8 @@
 
 #include <cstdint>
 
+#include "swapchain_color.hpp"  // TransferFunction
+
 // Forward declaration so the header stays free of the ImGui include.
 struct ImGuiContext;
 
@@ -54,12 +56,13 @@ public:
     // global loader, whose trampolines reject the unwrapped handles a layer sees.
     // Returns true on success; on failure the renderer stays not-ready() and tears
     // down cleanly.
-    // `srgb` is true when the swapchain (and thus the render-pass attachment) uses an
-    // _SRGB format; the renderer then pre-converts ImGui vertex colors sRGB->linear so
-    // the hardware encode on store reproduces the authored colors (see srgb.hpp).
+    // `transfer` is the swapchain's color transfer function (see swapchain_color.hpp). When
+    // it is not None, the renderer pre-converts ImGui's sRGB-authored vertex colors into
+    // that space (sRGB->linear for _SRGB/scRGB, plus BT.2020+PQ/HLG for HDR10) so they
+    // display correctly. None leaves colors untouched.
     bool init(VkInstance inst, VkPhysicalDevice phys, VkDevice dev, uint32_t queue_family,
               VkQueue queue, VkRenderPass render_pass, uint32_t image_count,
-              uint32_t api_version, bool srgb, PFN_vkGetInstanceProcAddr gipa,
+              uint32_t api_version, TransferFunction transfer, PFN_vkGetInstanceProcAddr gipa,
               const DeviceDispatch& disp);
 
     // Begin and build a frame for the given framebuffer extent: NewFrame -> draw the
@@ -109,7 +112,7 @@ public:
 private:
     bool init_done_ = false;
     bool frame_started_ = false;  // begin_frame called this present, end_frame pending
-    bool srgb_ = false;           // attachment is _SRGB -> convert vertex colors to linear
+    TransferFunction transfer_ = TransferFunction::None;  // swapchain color transfer fn
     ImGuiContext* ctx_ = nullptr;
     VkDevice device_ = VK_NULL_HANDLE;
     VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE;

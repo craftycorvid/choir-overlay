@@ -1,25 +1,30 @@
-// Swapchain color-space classification for the Choir overlay layer.
+// Swapchain color-space handling for the Choir overlay layer.
 //
-// ImGui authors its colors in sRGB. Whether the overlay must pre-convert them to linear
-// before writing depends on BOTH the swapchain format AND its color space — mirroring
-// MangoHud's convert_colors_vk(format, colorspace, ...):
+// ImGui authors its colors in sRGB. What we must do to those colors before writing them
+// into the swapchain depends on the swapchain's color space — this mirrors MangoHud's
+// convert_colors_vk (src/vulkan.cpp) + convert_colors (src/hud_elements.cpp) EXACTLY:
 //
-//   * 8-bit _SRGB format (e.g. B8G8R8A8_SRGB): the GPU applies linear->sRGB on store, so
-//     we pre-convert sRGB->linear and the encode reproduces the authored color.
-//   * scRGB-linear HDR (VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT, typically a float format
-//     like R16G16B16A16_SFLOAT): the buffer is LINEAR with no store-encode, so we must
-//     write linear values directly — again sRGB->linear. This is the case that made
-//     Diablo 4 (D3D12/VKD3D in HDR) look over-saturated: we wrote sRGB values verbatim
-//     into a linear buffer.
+//   color space                       transfer function   what we apply to each RGB color
+//   --------------------------------- ------------------- --------------------------------
+//   HDR10_ST2084 (PQ)                 PQ                  sRGB->linear, BT.709->BT.2020, PQ
+//   HDR10_HLG                         HLG                 sRGB->linear, BT.709->BT.2020, HLG
+//   EXTENDED_SRGB_LINEAR (scRGB)      SRGB                sRGB->linear
+//   anything else (incl. PASS_THROUGH) NONE / SRGB        none, unless the FORMAT is _SRGB
+//                                                          (hardware re-encodes) -> sRGB->linear
 //
-// Other HDR transfer functions (HDR10 PQ / HLG) need different conversions we don't
-// implement yet; they are reported as "unconverted HDR" so the layer logs them instead of
-// applying the wrong (sRGB) transfer.
+// We deliberately do NOT special-case VK_COLOR_SPACE_PASS_THROUGH_EXT — like MangoHud, it
+// falls through to NONE. The transfer math (SRGBToLinear / SRGBtoBT2020 / LinearToPQ /
+// LinearToHLG) is ported verbatim from MangoHud's src/hud_elements.cpp.
 #pragma once
 
 #include <vulkan/vulkan.h>
 
+#include <cmath>
+#include <cstdint>
+
 namespace choir {
+
+enum class TransferFunction { None, Srgb, Pq, Hlg };
 
 // True for swapchain formats that apply the sRGB transfer function on store.
 inline bool is_srgb_format(VkFormat f) {
@@ -35,40 +40,78 @@ inline bool is_srgb_format(VkFormat f) {
     }
 }
 
-// True for the floating-point formats used by HDR swapchains. These carry LINEAR values
-// (scRGB: 1.0 == 80 nits SDR-white), with no store-encode — so the overlay must write
-// linear, i.e. pre-convert its sRGB colors.
-inline bool is_hdr_float_format(VkFormat f) {
-    switch (f) {
-        case VK_FORMAT_R16G16B16A16_SFLOAT:   // the common scRGB HDR swapchain format
-        case VK_FORMAT_R16G16B16_SFLOAT:
-        case VK_FORMAT_B10G11R11_UFLOAT_PACK32:
-            return true;
-        default:
-            return false;
+// Pick the transfer function for a swapchain (MangoHud convert_colors_vk order: color
+// space first, then the _SRGB-format fallback).
+inline TransferFunction transfer_function_for(VkFormat fmt, VkColorSpaceKHR cs) {
+    switch (cs) {
+        case VK_COLOR_SPACE_HDR10_ST2084_EXT:         return TransferFunction::Pq;
+        case VK_COLOR_SPACE_HDR10_HLG_EXT:            return TransferFunction::Hlg;
+        case VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT: return TransferFunction::Srgb;
+        default:                                      break;
+    }
+    return is_srgb_format(fmt) ? TransferFunction::Srgb : TransferFunction::None;
+}
+
+// --- MangoHud color math (src/hud_elements.cpp), ported verbatim ----------------------
+inline float srgb_to_linear(float in) {
+    return in <= 0.04045f ? in / 12.92f : std::pow((in + 0.055f) / 1.055f, 2.4f);
+}
+
+// BT.709 -> BT.2020 primaries (applied to linear values). MangoHud's SRGBtoBT2020 matrix.
+inline void bt709_to_bt2020(float& x, float& y, float& z) {
+    const float r = 0.627392f * x + 0.329030f * y + 0.0432691f * z;
+    const float g = 0.069123f * x + 0.919523f * y + 0.0113204f * z;
+    const float b = 0.016423f * x + 0.088042f * y + 0.8956166f * z;
+    x = r; y = g; z = b;
+}
+
+inline float linear_to_pq(float in) {
+    const float m1 = 0.1593017578125f, m2 = 78.84375f;
+    const float c1 = 0.8359375f, c2 = 18.8515625f, c3 = 18.6875f;
+    const float targetL = 200.0f, maxL = 10000.0f;  // peak the overlay at 200 cd/m^2
+    in = std::pow(in * (targetL / maxL), m1);
+    in = (c1 + c2 * in) / (1.0f + c3 * in);
+    return std::pow(in, m2);
+}
+
+inline float linear_to_hlg(float in) {
+    const float a = 0.17883277f, b = 0.28466892f, c = 0.55991073f;
+    return in <= 1.0f / 12.0f ? std::sqrt(3.0f * in) : a * std::log(12.0f * in - b) + c;
+}
+
+// Transform one sRGB-authored RGB triple (0..1) into what the swapchain expects.
+inline void apply_transfer(TransferFunction tf, float& r, float& g, float& b) {
+    if (tf == TransferFunction::None) return;
+    r = srgb_to_linear(r); g = srgb_to_linear(g); b = srgb_to_linear(b);
+    if (tf == TransferFunction::Srgb) return;
+    bt709_to_bt2020(r, g, b);
+    if (tf == TransferFunction::Pq) {
+        r = linear_to_pq(r); g = linear_to_pq(g); b = linear_to_pq(b);
+    } else {  // Hlg
+        r = linear_to_hlg(r); g = linear_to_hlg(g); b = linear_to_hlg(b);
     }
 }
 
-// True when the overlay must pre-convert its sRGB colors to linear for this swapchain:
-//   * an _SRGB format (the GPU re-encodes linear->sRGB on store), or
-//   * an scRGB-linear HDR color space (EXTENDED_SRGB_LINEAR), or
-//   * a PASS_THROUGH HDR float swapchain — what DXVK/VKD3D use for HDR, where the buffer
-//     is linear scRGB and the presentation engine applies no transfer. Writing sRGB
-//     colors verbatim there leaves the minor channels too high -> washed-out/under-
-//     saturated (observed in Overwatch/Diablo 4 in HDR). All three want sRGB->linear.
-inline bool needs_srgb_conversion(VkFormat fmt, VkColorSpaceKHR cs) {
-    if (is_srgb_format(fmt)) return true;
-    if (cs == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT) return true;
-    if (cs == VK_COLOR_SPACE_PASS_THROUGH_EXT && is_hdr_float_format(fmt)) return true;
-    return false;
+// Transform an 8-bit RGB triple in place (ImGui packed-color channels). Alpha is the
+// caller's concern (it stays linear, untransformed — like MangoHud).
+inline void apply_transfer_u8(TransferFunction tf, uint8_t& r, uint8_t& g, uint8_t& b) {
+    if (tf == TransferFunction::None) return;
+    float fr = r / 255.0f, fg = g / 255.0f, fb = b / 255.0f;
+    apply_transfer(tf, fr, fg, fb);
+    auto q = [](float v) -> uint8_t {
+        v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+        return static_cast<uint8_t>(v * 255.0f + 0.5f);
+    };
+    r = q(fr); g = q(fg); b = q(fb);
 }
 
-// True for HDR color spaces whose transfer function we do NOT yet handle (PQ / HLG): the
-// overlay's sRGB colors will be wrong on these until we add proper conversion. Used only
-// for diagnostics/logging — we never apply the sRGB transfer to these.
-inline bool is_unhandled_hdr(VkColorSpaceKHR cs) {
-    return cs == VK_COLOR_SPACE_HDR10_ST2084_EXT || cs == VK_COLOR_SPACE_HDR10_HLG_EXT ||
-           cs == VK_COLOR_SPACE_DOLBYVISION_EXT;
+inline const char* transfer_name(TransferFunction tf) {
+    switch (tf) {
+        case TransferFunction::Srgb: return "srgb";
+        case TransferFunction::Pq:   return "pq";
+        case TransferFunction::Hlg:  return "hlg";
+        default:                     return "none";
+    }
 }
 
 // Short name for a color space (diagnostics).

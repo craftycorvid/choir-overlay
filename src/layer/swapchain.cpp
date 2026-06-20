@@ -20,15 +20,6 @@
 namespace choir {
 namespace {
 
-// Whether to pre-convert the overlay's sRGB colors to linear for this swapchain. Honors
-// the CHOIR_SRGB override (1 = force on, 0 = force off) so an ambiguous HDR color space
-// can be pinned down empirically; otherwise auto-detect from format + color space.
-bool resolve_srgb_convert(VkFormat fmt, VkColorSpaceKHR cs) {
-    if (const char* e = ::getenv("CHOIR_SRGB"); e && *e)
-        return e[0] != '0';
-    return needs_srgb_conversion(fmt, cs);
-}
-
 // Per-swapchain-image overlay resources. One command buffer + fence + semaphore
 // per image so a buffer still in flight (FIFO can have several frames queued) is
 // never re-recorded before its prior submit finishes.
@@ -344,7 +335,7 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
                            s.dd->graphics_queue_family, s.dd->graphics_queue,
                            s.render_pass, static_cast<uint32_t>(s.images.size()),
                            s.dd->api_version,
-                           resolve_srgb_convert(s.format, s.color_space), s.dd->instance_gipa,
+                           transfer_function_for(s.format, s.color_space), s.dd->instance_gipa,
                            d)) {
             s.imgui.reset();  // not ready — overlay draws nothing this swapchain
         }
@@ -361,7 +352,10 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
     // the renderer's device + descriptor pool). Created once per swapchain.
     if (renderer_ready && !s.avatars) {
         s.avatars = std::make_unique<AvatarTextures>();
-        s.avatars->init(s.imgui.get(), resolve_srgb_convert(s.format, s.color_space));
+        // Avatars decode via an _SRGB image format whenever we apply any transfer (the
+        // sampled value must be linear before the transfer math); raw UNORM only for None.
+        s.avatars->init(s.imgui.get(),
+                        transfer_function_for(s.format, s.color_space) != TransferFunction::None);
     }
 
     // Build the ImGui draw list for this frame BEFORE recording the render pass
@@ -521,16 +515,15 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device,
         s.color_space = pCreateInfo->imageColorSpace;
         s.extent = pCreateInfo->imageExtent;
 
-        // Diagnostics: dump the swapchain's color format/space and how we'll treat it.
-        // Set CHOIR_DEBUG_FORMAT=1 and launch the game to learn what it actually uses
-        // (e.g. an HDR scRGB swapchain that needs sRGB->linear conversion).
+        // Diagnostics: dump the swapchain's color format/space and the transfer function
+        // we'll apply to the overlay. Set CHOIR_DEBUG_FORMAT=1 and launch the game to see
+        // what it actually uses.
         if (const char* dbg = ::getenv("CHOIR_DEBUG_FORMAT"); dbg && *dbg) {
             std::fprintf(stderr,
-                         "[choir] swapchain format=%d colorspace=%d (%s) -> srgb_convert=%s%s\n",
+                         "[choir] swapchain format=%d colorspace=%d (%s) -> transfer=%s\n",
                          static_cast<int>(s.format), static_cast<int>(s.color_space),
                          colorspace_name(s.color_space),
-                         resolve_srgb_convert(s.format, s.color_space) ? "yes" : "no",
-                         is_unhandled_hdr(s.color_space) ? " [UNHANDLED HDR transfer]" : "");
+                         transfer_name(transfer_function_for(s.format, s.color_space)));
             std::fflush(stderr);
         }
 
