@@ -107,7 +107,12 @@ RpcEvent parse_notification(const json& data) {
 
     ev.notif.title = str_or(data, "title");
     ev.notif.body = str_or(data, "body");
-    ev.notif.icon_hash = str_or(data, "icon_url");
+    // Use the author's avatar HASH (not Discord's full icon_url) so the toast shares the
+    // same hash-keyed avatar cache as voice participants; ev.user_id carries the author id
+    // so the host can fetch it via AvatarCache. "" hash -> toast falls back to silhouette.
+    const json& author = obj_or_empty(message, "author");
+    ev.notif.icon_hash = str_or(author, "avatar");
+    ev.user_id = str_or(author, "id");
     // created_ms left at its default 0 — the host stamps it on receipt.
     return ev;
 }

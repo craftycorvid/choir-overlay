@@ -222,7 +222,11 @@ static void test_parse_notification() {
         "evt": "NOTIFICATION_CREATE",
         "data": {
             "channel_id": "chan9",
-            "message": { "id": "msg42", "content": "hi" },
+            "message": {
+                "id": "msg42",
+                "content": "hi",
+                "author": { "id": "user77", "avatar": "av_hash_xyz" }
+            },
             "icon_url": "https://cdn.example/icon.png",
             "title": "New message",
             "body": "Hello world"
@@ -234,7 +238,10 @@ static void test_parse_notification() {
     assert(ev->notif.id == "msg42");
     assert(ev->notif.title == "New message");
     assert(ev->notif.body == "Hello world");
-    assert(ev->notif.icon_hash == "https://cdn.example/icon.png");
+    // icon_hash must be the author's avatar HASH (so it resolves against the shared
+    // avatar cache), NOT Discord's icon_url; user_id carries the author id for the fetch.
+    assert(ev->notif.icon_hash == "av_hash_xyz");
+    assert(ev->user_id == "user77");
     // Parser must NOT set a timestamp.
     assert(ev->notif.created_ms == 0);
 }

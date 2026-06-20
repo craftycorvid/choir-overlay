@@ -113,6 +113,12 @@ int main(int argc, char** argv) {
             !ev.voice.avatar_hash.empty()) {
             avatars.request(ev.voice.user_id, ev.voice.avatar_hash);
         }
+        // A message notification carries its author's avatar hash + id; fetch it so the
+        // toast shows the real avatar (same cache as voice participants).
+        if (ev.kind == choir::RpcEvent::Notification &&
+            !ev.notif.icon_hash.empty() && !ev.user_id.empty()) {
+            avatars.request(ev.user_id, ev.notif.icon_hash);
+        }
     });
 
     // --- Pump the RPC client (~40ms; QSocketNotifier is a future optimization) ---
