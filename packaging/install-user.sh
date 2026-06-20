@@ -74,23 +74,17 @@ meson compile -C "${BUILD_DIR}"
 echo ">> installing into ${PREFIX}"
 meson install -C "${BUILD_DIR}"
 
-# ---- 3. write the implicit-layer manifest with an ABSOLUTE library_path ---------------
-# The build-tree manifest uses a relative path; the loader resolves an installed
-# implicit-layer manifest from a fixed dir, so it needs the absolute installed .so.
-if [ ! -f "${INSTALLED_SO}" ]; then
-  echo "install-user.sh: expected installed layer at ${INSTALLED_SO} but it is missing" >&2
+# ---- 3. the implicit-layer manifest is written by `meson install` -------------------
+# The build is configured with --prefix="${PREFIX}" (= ~/.local), so meson emits
+# ${MANIFEST_PATH} with an absolute library_path of ${INSTALLED_SO}. (No hand-writing
+# here — meson is the single source of truth for install placement, shared with the
+# pacman package.) Sanity-check it landed.
+if [ ! -f "${MANIFEST_PATH}" ]; then
+  echo "install-user.sh: expected meson to install the layer manifest at ${MANIFEST_PATH}" >&2
+  echo "                 but it is missing (is the meson install rule present?)" >&2
   exit 1
 fi
-mkdir -p "${MANIFEST_DIR}"
-cat > "${MANIFEST_PATH}" <<EOF
-{ "file_format_version": "1.2.0",
-  "layer": { "name": "VK_LAYER_choir_overlay_${ARCH}",
-    "type": "GLOBAL", "library_path": "${INSTALLED_SO}",
-    "api_version": "1.1.0", "implementation_version": "1",
-    "description": "Choir — an overlay for Discord (not affiliated with Discord Inc.)",
-    "disable_environment": { "DISABLE_CHOIR_OVERLAY": "1" } } }
-EOF
-echo ">> wrote manifest ${MANIFEST_PATH}"
+echo ">> layer manifest installed by meson: ${MANIFEST_PATH}"
 
 # ---- 4. autostart entry (opt-in) -------------------------------------------------------
 AUTOSTART_PATH="${AUTOSTART_DIR}/choir.desktop"
