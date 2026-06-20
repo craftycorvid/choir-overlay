@@ -1,0 +1,33 @@
+# Maintainer: craftycorvid <me@ivanff.com>
+#
+# Local-buildable pacman package for Choir (a Wayland Discord voice overlay for Vulkan
+# games). Run `makepkg -si` from this directory to build + install it.
+#
+# This sources the working tree this PKGBUILD lives in (offline: imgui + nlohmann_json are
+# vendored under subprojects/). To publish on the AUR, replace the `_srcroot` indirection
+# with a git source and add a pkgver(), e.g.:
+#   source=("git+https://github.com/craftycorvid/choir.git")
+#   pkgver() { cd "$srcdir/choir"; git describe --tags --always | sed 's/^v//;s/-/./g'; }
+pkgname=choir
+pkgver=0.0.1
+pkgrel=1
+pkgdesc="Wayland Discord voice overlay for Vulkan games (not affiliated with Discord Inc.)"
+arch=('x86_64')
+url="https://github.com/craftycorvid/choir"
+# NOTE: no LICENSE file in the tree yet; commit one and keep this in sync.
+license=('MIT')
+depends=('qt6-base' 'vulkan-icd-loader')
+makedepends=('meson' 'vulkan-headers')
+
+# The repo root (this PKGBUILD lives in <root>/packaging/).
+_srcroot="${startdir}/.."
+
+build() {
+  meson setup "${srcdir}/build" "${_srcroot}" \
+    --prefix=/usr --buildtype=release -Dbuild_tests=false
+  meson compile -C "${srcdir}/build"
+}
+
+package() {
+  DESTDIR="${pkgdir}" meson install -C "${srcdir}/build"
+}

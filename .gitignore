@@ -12,3 +12,9 @@ compile_commands.json
 /subprojects/packagecache/
 /subprojects/packagefiles/
 /subprojects/.wraplock
+
+# makepkg build artifacts (packaging/PKGBUILD)
+/packaging/pkg/
+/packaging/src/
+/packaging/*.pkg.tar.zst
+/packaging/*.log
