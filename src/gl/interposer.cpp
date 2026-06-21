@@ -55,7 +55,10 @@ struct CtxState {
     bool skip = false;
 };
 std::mutex g_mutex;
-std::unordered_map<void*, CtxState*> g_ctxs;   // GL context handle -> state
+// GL context handle -> state. A context the game never explicitly destroys leaks its
+// CtxState until process exit; that is deliberate — running GL shutdown() at library
+// unload is unsafe (no current context guaranteed), and process teardown reclaims it all.
+std::unordered_map<void*, CtxState*> g_ctxs;
 
 int64_t now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
