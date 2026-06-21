@@ -37,7 +37,7 @@ namespace choir {
 struct DeviceDispatch;  // src/layer/dispatch.hpp
 struct Snapshot;        // ipc/state.hpp
 class AvatarTextures;   // src/layer/avatar_textures.hpp
-class StateClient;      // src/layer/state_client.hpp
+class StateClient;      // src/overlay/state_client.hpp
 
 class ImguiRenderer {
 public:

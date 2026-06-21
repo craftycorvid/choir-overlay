@@ -155,7 +155,7 @@ fake_host = executable('fake_host',
 # build/src/layer (libchoir_overlay target above). We force the layer on via the
 # loader env vars and point VK_LAYER_PATH at that dir. vk_min_present exits 77
 # when no headless surface is available — meson treats exit 77 as SKIP.
-# Layer opacity-easing math (pure; no Vulkan/ImGui — just includes src/layer/fade.hpp).
+# Layer opacity-easing math (pure; no Vulkan/ImGui — just includes src/overlay/fade.hpp).
 test('fade',
   executable('t_fade',
     'layer/test_fade.cpp',

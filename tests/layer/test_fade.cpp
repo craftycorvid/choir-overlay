@@ -1,4 +1,4 @@
-// Unit tests for the per-participant opacity easing (src/layer/fade.hpp).
+// Unit tests for the per-participant opacity easing (src/overlay/fade.hpp).
 //
 // The voice panel dims non-speaking indicators and quickly fades them up while a
 // participant speaks. fade.hpp factors the framerate-independent easing out as a pure
