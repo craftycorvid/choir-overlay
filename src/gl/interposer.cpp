@@ -82,6 +82,9 @@ void read_comm(char* buf, size_t n) {
 __attribute__((constructor)) void on_load() {
     if (!gl_debug()) return;
     char comm[64]; read_comm(comm, sizeof comm);
+    // The JVM fork+execs jspawnhelper for every subprocess; it never does GL, so skip the
+    // log spam (LD_PRELOAD is inherited by all children).
+    if (std::strcmp(comm, "jspawnhelper") == 0) return;
     CHOIR_GL_LOG("loaded into pid=%ld comm=\"%s\" (CHOIR_GL_DEBUG on)",
                  static_cast<long>(getpid()), comm);
 }
@@ -277,13 +280,26 @@ CHOIR_EXPORT void glXDestroyContext(Display* dpy, GLXContext ctx) {
 // Some toolkits (GLFW, SDL) fetch the swap function via eglGetProcAddress / glXGetProcAddress
 // / dlsym and call THAT pointer, bypassing PLT symbol interposition. Return our hook for the
 // names we own; otherwise defer to the real resolver.
+
+// Forward decls so hook_for can hand out our resolver hooks (defined just below).
+CHOIR_EXPORT void* eglGetProcAddress(const char* name);
+CHOIR_EXPORT void* glXGetProcAddress(const unsigned char* name);
+CHOIR_EXPORT void* glXGetProcAddressARB(const unsigned char* name);
+
 namespace {
 void* hook_for(const char* name) {
     if (!name) return nullptr;
+    // Swap functions — the actual draw points.
     if (!std::strcmp(name, "eglSwapBuffers")) return reinterpret_cast<void*>(&eglSwapBuffers);
     if (!std::strcmp(name, "eglSwapBuffersWithDamageKHR")) return reinterpret_cast<void*>(&eglSwapBuffersWithDamageKHR);
     if (!std::strcmp(name, "eglSwapBuffersWithDamageEXT")) return reinterpret_cast<void*>(&eglSwapBuffersWithDamageEXT);
     if (!std::strcmp(name, "glXSwapBuffers")) return reinterpret_cast<void*>(&glXSwapBuffers);
+    // Resolver functions — hand out OURS too. Toolkits (GLFW) fetch a GetProcAddress via
+    // dlsym and resolve the swap *through it*; if they got the real resolver they'd get the
+    // real swap and bypass us. Returning our resolver keeps the whole chain pointed at us.
+    if (!std::strcmp(name, "eglGetProcAddress")) return reinterpret_cast<void*>(&eglGetProcAddress);
+    if (!std::strcmp(name, "glXGetProcAddress")) return reinterpret_cast<void*>(&glXGetProcAddress);
+    if (!std::strcmp(name, "glXGetProcAddressARB")) return reinterpret_cast<void*>(&glXGetProcAddressARB);
     return nullptr;
 }
 }  // namespace
