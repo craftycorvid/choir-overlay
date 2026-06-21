@@ -15,15 +15,14 @@
 // Visibility is voice-state driven: if !snap.in_voice it draws NOTHING and returns.
 #pragma once
 
-#include <vulkan/vulkan.h>
+#include "iavatar_textures.hpp"
 
 #include <cstdint>
 
 namespace choir {
 
 struct Snapshot;       // ipc/state.hpp
-class AvatarTextures;  // src/layer/avatar_textures.hpp
-class StateClient;     // src/layer/state_client.hpp
+class StateClient;     // src/overlay/state_client.hpp
 
 // Draw the overlay for `snap` into the current ImGui frame.
 //   * `textures`  resolves participant avatar ImTextureIDs by hash (render thread).
@@ -35,7 +34,7 @@ class StateClient;     // src/layer/state_client.hpp
 //
 // Never throws; on any missing data it simply draws less. Draws nothing when
 // !snap.in_voice.
-void draw_overlay(const Snapshot& snap, AvatarTextures& textures, StateClient& client,
-                  VkExtent2D extent, int64_t now_ms);
+void draw_overlay(const Snapshot& snap, IAvatarTextures& textures, StateClient& client,
+                  Extent2D extent, int64_t now_ms);
 
 }  // namespace choir

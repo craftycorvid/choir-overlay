@@ -1,0 +1,40 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-21-opengl-support.md",
+  "tasks": [
+    {
+      "id": 6,
+      "subject": "Task 6: Extract shared overlay core (src/overlay/)",
+      "status": "completed",
+      "description": "Move backend-agnostic overlay code (overlay_ui/state_client/gating/fade) into a src/overlay/ static lib behind IAvatarTextures + Extent2D; rebuild the Vulkan layer on top; all existing tests pass. See plan Task 6 for full steps.\n\n```json:metadata\n{\"files\": [\"src/overlay/iavatar_textures.hpp\", \"src/overlay/meson.build\", \"src/overlay/overlay_ui.cpp\", \"src/overlay/overlay_ui.hpp\", \"src/overlay/state_client.cpp\", \"src/overlay/state_client.hpp\", \"src/overlay/gating.cpp\", \"src/overlay/gating.hpp\", \"src/overlay/fade.hpp\", \"src/layer/avatar_textures.hpp\", \"src/layer/imgui_renderer.cpp\", \"src/layer/meson.build\", \"meson.build\", \"tests/meson.build\"], \"verifyCommand\": \"meson setup --reconfigure build . --buildtype=release && meson compile -C build && meson test -C build\", \"acceptanceCriteria\": [\"overlay_ui has no Vk/Vulkan token\", \"IAvatarTextures = lookup + get_or_load only\", \"all 22 existing tests pass\", \"libchoir_overlay.so exports only 3 vk* symbols\"]}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: GL renderer + GlAvatarTextures + vendored imgui_impl_opengl3",
+      "status": "completed",
+      "blockedBy": [6],
+      "description": "Per-context ImGui-OpenGL frame driver + GL avatar-texture cache (IAvatarTextures impl) + vendored imgui_impl_opengl3 in a static lib; reuse shared draw_overlay. Delivers code + clean compile. See plan Task 8.\n\n```json:metadata\n{\"files\": [\"src/gl/gl_api.hpp\", \"src/gl/gl_api.cpp\", \"src/gl/imgui_impl_opengl3_unity.cpp\", \"src/gl/gl_renderer.cpp\", \"src/gl/gl_renderer.hpp\", \"src/gl/gl_avatar_textures.cpp\", \"src/gl/gl_avatar_textures.hpp\", \"src/gl/meson.build\", \"meson.build\"], \"verifyCommand\": \"meson setup --reconfigure build . --buildtype=release && meson compile -C build\", \"acceptanceCriteria\": [\"GlAvatarTextures uploads RGBA8 + caches + shutdown deletes\", \"gl_renderer drives NewFrame->draw_overlay->RenderDrawData with sane clamp\", \"choir_gl_objs compiles with no GL/EGL/GLX dev headers\", \"no GL/EGL/GLX system include in src/gl/\"]}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: GL interposer (libchoir_gl.so)",
+      "status": "completed",
+      "blockedBy": [6, 8],
+      "description": "LD_PRELOAD lib hooking eglSwapBuffers/glXSwapBuffers (+ damage, destroy, dlsym/*GetProcAddress); gate via shared gating/StateClient; lazy per-context GlRenderer+GlAvatarTextures; draw; real swap; never crash. See plan Task 7.\n\n```json:metadata\n{\"files\": [\"src/gl/interposer.cpp\", \"src/gl/choir_gl.version\", \"src/gl/meson.build\"], \"verifyCommand\": \"meson compile -C build && ldd build/src/gl/libchoir_gl.so | grep -E 'libEGL|libGLX'; nm -CD build/src/gl/libchoir_gl.so | grep ' T '\", \"acceptanceCriteria\": [\"no libEGL/libGLX in ldd\", \"exports only the 10 hook symbols, no ImGui/choir globals\", \"dlsym chains via dlvsym without recursion\", \"gate->lazy-init->draw->real-swap; failure->skip->real-swap\", \"ctx map mutex-guarded; destroy hooks free state\"]}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 10: Headless EGL golden test",
+      "status": "completed",
+      "blockedBy": [6, 8],
+      "description": "Offscreen EGL pbuffer GL context; render overlay (one real avatar) through GlRenderer+GlAvatarTextures; glReadPixels; assert it drew. Exit 77 SKIP if no EGL. See plan Task 10.\n\n```json:metadata\n{\"files\": [\"tests/gl/test_gl_golden.cpp\", \"tests/meson.build\"], \"verifyCommand\": \"meson setup --reconfigure build . --buildtype=release && meson test -C build gl_golden -v\", \"acceptanceCriteria\": [\"EGL pbuffer + RGBA8 FBO; exit 77 SKIP when no context\", \"synthetic Snapshot + on-disk avatar pre-loaded\", \"panel-region pixel != bg AND far-corner = bg\", \"registered under build_tests and passes\"]}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 9: choir-run wrapper + packaging",
+      "status": "completed",
+      "blockedBy": [7],
+      "description": "Per-launch injector choir-run (LD_PRELOAD libchoir_gl.so, baked absolute path, CHOIR_GL_LIB override); install/package the GL lib + wrapper; PKGBUILD pkgdesc mentions OpenGL. See plan Task 9.\n\n```json:metadata\n{\"files\": [\"packaging/choir-run.in\", \"meson.build\", \"packaging/install-user.sh\", \"packaging/PKGBUILD\"], \"verifyCommand\": \"meson install --destdir \\\"$PWD/stage\\\" -C build && find stage -name libchoir_gl.so -o -name choir-run\", \"acceptanceCriteria\": [\"choir-run baked absolute LD_PRELOAD, appends, exec\", \"CHOIR_GL_LIB override\", \"meson install places lib + wrapper\", \"PKGBUILD packages both; pkgdesc mentions OpenGL\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-21T00:00:02Z"
+}

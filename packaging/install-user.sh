@@ -46,6 +46,8 @@ AUTOSTART_DIR="${XDG_CONFIG_HOME_DIR}/autostart"
 
 INSTALLED_SO="${PREFIX}/lib/choir/libchoir_overlay.so"
 INSTALLED_BIN="${PREFIX}/bin/choir"
+INSTALLED_GL_SO="${PREFIX}/lib/choir/libchoir_gl.so"
+INSTALLED_CHOIR_RUN="${PREFIX}/bin/choir-run"
 
 echo "Choir per-user install"
 echo "  project    : ${PROJECT_ROOT}"
@@ -103,6 +105,8 @@ echo "Choir installed."
 echo
 echo "  layer  : ${INSTALLED_SO}"
 echo "  host   : ${INSTALLED_BIN}"
+echo "  gl lib : ${INSTALLED_GL_SO}"
+echo "  gl run : ${INSTALLED_CHOIR_RUN}"
 echo "  manifest: ${MANIFEST_PATH}"
 echo
 if ! printf '%s' ":${PATH}:" | grep -q ":${PREFIX}/bin:"; then
@@ -116,10 +120,13 @@ echo "     - authorize Discord from the tray, then join a voice channel."
 echo "  2. The overlay is now active on ALL Vulkan games by default."
 echo "     Disable for one launch:  DISABLE_CHOIR_OVERLAY=1 %command%   (Steam launch options)"
 echo "     Per-game denylist:       edit it in the Choir settings window."
-echo "  3. Verify the layer is visible to Vulkan:"
+echo "  3. For OpenGL games (Minecraft, etc.), the overlay is opt-in per launch:"
+echo "        choir-run %command%        (Steam launch options)"
+echo "        choir-run <game>           (direct)"
+echo "  4. Verify the layer is visible to Vulkan:"
 echo "        vulkaninfo | grep -i choir"
 if [ "${AUTOSTART}" -eq 0 ]; then
-  echo "  4. (Optional) start choir on login:"
+  echo "  5. (Optional) start choir on login:"
   echo "        bash packaging/install-user.sh --autostart"
   echo "     or copy packaging/choir.desktop to ${AUTOSTART_DIR}/ and set X-GNOME-Autostart-enabled=true"
 fi

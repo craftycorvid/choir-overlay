@@ -155,11 +155,11 @@ fake_host = executable('fake_host',
 # build/src/layer (libchoir_overlay target above). We force the layer on via the
 # loader env vars and point VK_LAYER_PATH at that dir. vk_min_present exits 77
 # when no headless surface is available — meson treats exit 77 as SKIP.
-# Layer opacity-easing math (pure; no Vulkan/ImGui — just includes src/layer/fade.hpp).
+# Layer opacity-easing math (pure; no Vulkan/ImGui — just includes src/overlay/fade.hpp).
 test('fade',
   executable('t_fade',
     'layer/test_fade.cpp',
-    include_directories: layer_inc,
+    include_directories: overlay_inc,
   ),
 )
 
@@ -260,3 +260,26 @@ test('layer_faults',
   timeout: 240,
   env: {'XDG_DATA_HOME': xdg_isolate},
 )
+
+# GL backend golden: render the overlay through GlRenderer into an offscreen EGL pbuffer
+# FBO and assert it drew. Real-GPU test (like the Vulkan goldens); it links the real GL
+# objects (choir_gl_objs) + shared overlay core, creates a desktop-GL EGL context (the
+# production gl_backend_lib is compiled for desktop GL, which is what Linux games run),
+# renders one frame with a real avatar texture, reads it back, and checks a pixel inside
+# the panel differs from the cleared background while a far pixel stays the background.
+# Exit 77 (no EGL pbuffer context here) is propagated by meson as a SKIP. The GL headers
+# live in src/gl, so it's added to the include path. Only registered under build_tests
+# (this whole subdir is gated by that option in the top-level meson.build).
+egl_dep = dependency('egl', required: false)
+gl_dep = dependency('gl', required: false)
+if egl_dep.found() and gl_dep.found()
+  test('gl_golden',
+    executable('test_gl_golden',
+      'gl/test_gl_golden.cpp',
+      link_with: [choir_gl_objs, libchoir_overlay_shared, libchoir_ipc],
+      include_directories: [include_directories('../src/gl'), overlay_inc, ipc_inc],
+      dependencies: [imgui_dep, json_dep, egl_dep, gl_dep,
+                     dependency('threads'), dependency('dl')],
+    ),
+  )
+endif

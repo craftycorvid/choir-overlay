@@ -11,11 +11,11 @@
 pkgname=choir
 pkgver=0.0.1
 pkgrel=1
-pkgdesc="Wayland Discord voice overlay for Vulkan games (not affiliated with Discord Inc.)"
+pkgdesc="Wayland Discord voice overlay for Vulkan + OpenGL games (not affiliated with Discord Inc.)"
 arch=('x86_64')
 url="https://github.com/craftycorvid/choir-overlay"
 license=('MIT')
-depends=('qt6-base' 'vulkan-icd-loader')
+depends=('qt6-base' 'vulkan-icd-loader' 'libglvnd')
 makedepends=('meson' 'vulkan-headers')
 
 # The repo root (this PKGBUILD lives in <root>/packaging/).

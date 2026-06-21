@@ -19,14 +19,15 @@
 #include <string>
 #include <unordered_map>
 
-#include "imgui.h"            // ImTextureID
-#include "state_client.hpp"   // AvatarReq
+#include "imgui.h"             // ImTextureID
+#include "iavatar_textures.hpp"  // IAvatarTextures
+#include "state_client.hpp"    // AvatarReq
 
 namespace choir {
 
 class ImguiRenderer;
 
-class AvatarTextures {
+class AvatarTextures : public IAvatarTextures {
 public:
     AvatarTextures() = default;
     ~AvatarTextures();
@@ -45,11 +46,11 @@ public:
     // submit + fence wait), registers it with the ImGui backend, and caches by hash.
     // Returns the ImTextureID, or 0 (ImTextureID_Invalid) on any failure — never
     // throws, never crashes the game.
-    ImTextureID get_or_load(const AvatarReq& req);
+    ImTextureID get_or_load(const AvatarReq& req) override;
 
     // Look up an already-loaded texture by hash (for Task 17's panel). Returns 0 if
     // not loaded.
-    ImTextureID lookup(const std::string& hash) const;
+    ImTextureID lookup(const std::string& hash) const override;
 
     // How many textures are cached (for tests / diagnostics).
     size_t size() const { return textures_.size(); }

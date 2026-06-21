@@ -2,8 +2,8 @@
 #
 # Choir — per-user uninstall. Removes everything install-user.sh placed under $HOME:
 #   - the implicit-layer manifest
-#   - the installed layer .so (and its ~/.local/lib/choir dir if now empty)
-#   - the choir binary
+#   - the installed layer .so + the GL overlay .so (and ~/.local/lib/choir if now empty)
+#   - the choir binary + the choir-run GL launcher
 #   - the autostart entry
 # Leaves user config/cache (~/.config/choir, ~/.cache/choir) untouched by default;
 # pass --purge to remove those too. Touches nothing outside $HOME.
@@ -28,7 +28,9 @@ XDG_CACHE_HOME_DIR="${XDG_CACHE_HOME:-${HOME}/.cache}"
 
 MANIFEST_PATH="${XDG_DATA_HOME_DIR}/vulkan/implicit_layer.d/choir_overlay.${ARCH}.json"
 INSTALLED_SO="${PREFIX}/lib/choir/libchoir_overlay.so"
+INSTALLED_GL_SO="${PREFIX}/lib/choir/libchoir_gl.so"
 INSTALLED_BIN="${PREFIX}/bin/choir"
+INSTALLED_CHOIR_RUN="${PREFIX}/bin/choir-run"
 AUTOSTART_PATH="${XDG_CONFIG_HOME_DIR}/autostart/choir.desktop"
 # meson installs the static ImGui dep alongside (it is linked privately into the
 # layer .so, never dlopen'd); clean up the orphan so uninstall leaves no trace.
@@ -42,7 +44,9 @@ echo "Choir per-user uninstall"
 echo
 rm_if "${MANIFEST_PATH}" "manifest"
 rm_if "${INSTALLED_SO}"  "layer .so"
+rm_if "${INSTALLED_GL_SO}" "gl overlay .so"
 rm_if "${INSTALLED_BIN}" "host binary"
+rm_if "${INSTALLED_CHOIR_RUN}" "gl launcher"
 rm_if "${AUTOSTART_PATH}" "autostart entry"
 rm_if "${ORPHAN_IMGUI}" "bundled static imgui"
 

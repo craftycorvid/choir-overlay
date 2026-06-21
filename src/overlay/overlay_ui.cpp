@@ -16,7 +16,7 @@
 
 #include "imgui.h"
 
-#include "avatar_textures.hpp"
+#include "iavatar_textures.hpp"
 #include "fade.hpp"
 #include "ipc/state.hpp"
 #include "state_client.hpp"
@@ -83,7 +83,7 @@ bool is_center(Anchor a) { return a == Anchor::CenterLeft || a == Anchor::Center
 // Compute the top-left position of a panel of `size` for `anchor` within `extent`,
 // inset by a scaled margin. The window pivot is its top-left, so we subtract size on
 // the right/bottom anchors. Center anchors hug the left/right edge, vertically centered.
-ImVec2 anchored_pos(Anchor anchor, VkExtent2D extent, ImVec2 size, float margin) {
+ImVec2 anchored_pos(Anchor anchor, Extent2D extent, ImVec2 size, float margin) {
     const float W = static_cast<float>(extent.width);
     const float H = static_cast<float>(extent.height);
     float x = is_left(anchor) ? margin : (W - margin - size.x);
@@ -147,7 +147,7 @@ void draw_user_glyph(ImDrawList* dl, float cx, float cy, float r, float a) {
 // Resolve an avatar/icon texture by hash, loading it on demand from the retained map if
 // not yet cached on this swapchain (this is what makes images survive a swapchain
 // recreate). Returns ImTextureID_Invalid for an empty hash or any load failure.
-ImTextureID resolve_icon(const std::string& hash, AvatarTextures& textures,
+ImTextureID resolve_icon(const std::string& hash, IAvatarTextures& textures,
                          StateClient& client) {
     if (hash.empty()) return ImTextureID_Invalid;
     ImTextureID id = textures.lookup(hash);
@@ -159,7 +159,7 @@ ImTextureID resolve_icon(const std::string& hash, AvatarTextures& textures,
     return id;
 }
 
-ImTextureID resolve_avatar(const Participant& p, AvatarTextures& textures,
+ImTextureID resolve_avatar(const Participant& p, IAvatarTextures& textures,
                            StateClient& client) {
     return resolve_icon(p.avatar_hash, textures, client);
 }
@@ -214,8 +214,8 @@ std::vector<std::string> wrap_text(const std::string& text, float size, float wr
 }
 
 // --- Voice participant panel ---------------------------------------------------------
-void draw_voice_panel(const Snapshot& snap, AvatarTextures& textures, StateClient& client,
-                      VkExtent2D extent, int64_t now_ms) {
+void draw_voice_panel(const Snapshot& snap, IAvatarTextures& textures, StateClient& client,
+                      Extent2D extent, int64_t now_ms) {
     const AppearanceConfig& cfg = snap.config;
     const float s = cfg.scale > 0.05f ? cfg.scale : 1.0f;
 
@@ -331,8 +331,8 @@ void draw_voice_panel(const Snapshot& snap, AvatarTextures& textures, StateClien
 // --- Notification toasts -------------------------------------------------------------
 // Styled after the official Discord overlay: a dark rounded card carrying a circular icon
 // on the left, a bright (slightly larger) title, and a muted body wrapped to two lines.
-void draw_toasts(const Snapshot& snap, AvatarTextures& textures, StateClient& client,
-                 VkExtent2D extent, int64_t now_ms) {
+void draw_toasts(const Snapshot& snap, IAvatarTextures& textures, StateClient& client,
+                 Extent2D extent, int64_t now_ms) {
     const AppearanceConfig& cfg = snap.config;
     const float s = cfg.scale > 0.05f ? cfg.scale : 1.0f;
     const int64_t dur = cfg.toast_duration_ms > 0 ? cfg.toast_duration_ms : 5000;
@@ -446,8 +446,8 @@ void draw_toasts(const Snapshot& snap, AvatarTextures& textures, StateClient& cl
 
 }  // namespace
 
-void draw_overlay(const Snapshot& snap, AvatarTextures& textures, StateClient& client,
-                  VkExtent2D extent, int64_t now_ms) {
+void draw_overlay(const Snapshot& snap, IAvatarTextures& textures, StateClient& client,
+                  Extent2D extent, int64_t now_ms) {
     // Visibility is voice-state driven: draw NOTHING unless we are in a voice channel.
     if (!snap.in_voice) return;
 

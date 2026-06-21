@@ -35,7 +35,9 @@ qt_core_net_dep = dependency('qt6', modules: ['Core', 'Network'])
 
 subdir('src/ipc')
 subdir('src/host')
+subdir('src/overlay')
 subdir('src/layer')
+subdir('src/gl')
 
 # --- Install-time artifacts (packaging). The layer .so + host binary are installed by
 # their own meson.build (install: true). Here we add the install-time implicit-layer
@@ -58,6 +60,20 @@ configure_file(
 # App-menu entry. Exec=choir (resolved on PATH).
 install_data('packaging/choir.desktop',
   install_dir: get_option('datadir') / 'applications')
+
+# choir-run: per-launch LD_PRELOAD injector for OpenGL games. The GL overlay lib has no
+# implicit-loader mechanism (unlike the Vulkan layer), so GL injection is opt-in via this
+# wrapper. Bake the absolute installed lib path (64-bit; CHOIR_GL_LIB overrides).
+configure_file(
+  input: 'packaging/choir-run.in',
+  output: 'choir-run',
+  configuration: {
+    'CHOIR_GL_LIB': get_option('prefix') / get_option('libdir') / 'choir' / 'libchoir_gl.so',
+  },
+  install: true,
+  install_dir: get_option('bindir'),
+  install_mode: 'rwxr-xr-x',
+)
 
 if get_option('build_tests')
   subdir('tests')
