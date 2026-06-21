@@ -12,7 +12,7 @@ constexpr GLenum GL_UNSIGNED_BYTE = 0x1401, GL_LINEAR = 0x2601;
 constexpr GLenum GL_TEXTURE_MIN_FILTER = 0x2801, GL_TEXTURE_MAG_FILTER = 0x2800;
 constexpr GLenum GL_CLAMP_TO_EDGE = 0x812F;
 constexpr GLenum GL_TEXTURE_WRAP_S = 0x2802, GL_TEXTURE_WRAP_T = 0x2803;
-constexpr GLenum GL_UNPACK_ALIGNMENT = 0x0CF5;
+constexpr GLenum GL_UNPACK_ALIGNMENT = 0x0CF5, GL_TEXTURE_BINDING_2D = 0x8069;
 
 using PFNGenTextures   = void (*)(GLsizei, GLuint*);
 using PFNBindTexture   = void (*)(GLenum, GLuint);
@@ -20,6 +20,7 @@ using PFNTexParameteri = void (*)(GLenum, GLenum, GLint);
 using PFNTexImage2D    = void (*)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*);
 using PFNDeleteTextures= void (*)(GLsizei, const GLuint*);
 using PFNPixelStorei   = void (*)(GLenum, GLint);
+using PFNGetIntegerv   = void (*)(GLenum, GLint*);
 
 struct GL {
     PFNGenTextures   GenTextures   = reinterpret_cast<PFNGenTextures>(glapi::get_proc("glGenTextures"));
@@ -28,8 +29,9 @@ struct GL {
     PFNTexImage2D    TexImage2D    = reinterpret_cast<PFNTexImage2D>(glapi::get_proc("glTexImage2D"));
     PFNDeleteTextures DeleteTextures = reinterpret_cast<PFNDeleteTextures>(glapi::get_proc("glDeleteTextures"));
     PFNPixelStorei   PixelStorei   = reinterpret_cast<PFNPixelStorei>(glapi::get_proc("glPixelStorei"));
+    PFNGetIntegerv   GetIntegerv   = reinterpret_cast<PFNGetIntegerv>(glapi::get_proc("glGetIntegerv"));
     bool ok() const { return GenTextures && BindTexture && TexParameteri && TexImage2D
-                          && DeleteTextures && PixelStorei; }
+                          && DeleteTextures && PixelStorei && GetIntegerv; }
 };
 // Resolves all six GL entrypoints once, on first call — which must be from the render
 // thread with the GL loader live (else they stay null and get_or_load returns Invalid).
@@ -55,6 +57,11 @@ ImTextureID GlAvatarTextures::get_or_load(const AvatarReq& req) {
     GLuint tex = 0;
     gl().GenTextures(1, &tex);
     if (tex == 0) return ImTextureID_Invalid;
+    // Save the game's texture binding + unpack alignment: we run inside the swap hook, so
+    // leaking either into the game's next frame can cause subtle rendering bugs.
+    GLint prev_tex = 0, prev_align = 4;
+    gl().GetIntegerv(GL_TEXTURE_BINDING_2D, &prev_tex);
+    gl().GetIntegerv(GL_UNPACK_ALIGNMENT, &prev_align);
     gl().BindTexture(GL_TEXTURE_2D, tex);
     gl().PixelStorei(GL_UNPACK_ALIGNMENT, 1);
     gl().TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -63,6 +70,8 @@ ImTextureID GlAvatarTextures::get_or_load(const AvatarReq& req) {
     gl().TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     gl().TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, GLsizei(w), GLsizei(h), 0,
                     GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    gl().BindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prev_tex));   // restore game's binding
+    gl().PixelStorei(GL_UNPACK_ALIGNMENT, prev_align);
     textures_.emplace(req.hash, tex);
     return static_cast<ImTextureID>(static_cast<uintptr_t>(tex));
 }
