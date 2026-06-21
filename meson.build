@@ -61,6 +61,20 @@ configure_file(
 install_data('packaging/choir.desktop',
   install_dir: get_option('datadir') / 'applications')
 
+# choir-run: per-launch LD_PRELOAD injector for OpenGL games. The GL overlay lib has no
+# implicit-loader mechanism (unlike the Vulkan layer), so GL injection is opt-in via this
+# wrapper. Bake the absolute installed lib path (64-bit; CHOIR_GL_LIB overrides).
+configure_file(
+  input: 'packaging/choir-run.in',
+  output: 'choir-run',
+  configuration: {
+    'CHOIR_GL_LIB': get_option('prefix') / get_option('libdir') / 'choir' / 'libchoir_gl.so',
+  },
+  install: true,
+  install_dir: get_option('bindir'),
+  install_mode: 'rwxr-xr-x',
+)
+
 if get_option('build_tests')
   subdir('tests')
 endif

@@ -1,0 +1,14 @@
+#!/bin/sh
+# Inject the Choir GL overlay into an OpenGL game:
+#   choir-run <game…>            # direct
+#   choir-run %command%          # Steam launch option
+# Gating (denylist + voice state) happens inside the lib, so a denylisted/idle game
+# injects but draws nothing. Override the lib path with CHOIR_GL_LIB if needed.
+# (v1 is 64-bit only; 32-bit support is a later add via a lib32 build + $LIB selection.)
+lib="${CHOIR_GL_LIB:-@CHOIR_GL_LIB@}"
+if [ ! -e "$lib" ]; then
+  echo "choir-run: GL overlay library not found: $lib" >&2
+  echo "           set CHOIR_GL_LIB or reinstall Choir." >&2
+fi
+export LD_PRELOAD="${LD_PRELOAD:+$LD_PRELOAD:}$lib"
+exec "$@"
