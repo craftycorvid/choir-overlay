@@ -93,7 +93,19 @@ void destroy_ctx(void* ctx_key) {
         if (it == g_ctxs.end()) return;
         st = it->second; g_ctxs.erase(it);
     }
-    st->textures.shutdown();   // delete GL textures while the context is still current
+    // GL teardown is only safe when the context being destroyed is the one CURRENT on this
+    // thread: glvnd dispatches GL through the current context, so glDeleteTextures /
+    // ImGui_ImplOpenGL3_Shutdown on a non-current (or no) current context segfaults.
+    // egl/glXDestroyContext are frequently called with the context not current — then the
+    // driver frees the context's GL objects on destroy anyway, so we drop the map entry
+    // (done above) and LEAK the small CtxState wrapper rather than run its GL-touching
+    // destructors. Bounded, rare, and crash-free.
+    auto egl_cur = CHOIR_REAL(EGLContext (*)(), "eglGetCurrentContext");
+    auto glx_cur = CHOIR_REAL(GLXContext (*)(), "glXGetCurrentContext");
+    const bool is_current = (egl_cur && egl_cur() == ctx_key) ||
+                            (glx_cur && glx_cur() == ctx_key);
+    if (!is_current) return;   // safe fallback: leak the wrapper; GL objects die with the context
+    st->textures.shutdown();
     st->renderer.shutdown();
     delete st;
 }
@@ -113,26 +125,33 @@ void* egl_current_ctx() {
 }  // namespace
 
 // ---- EGL -------------------------------------------------------------------------------
+// Every hook resolves the real next function through CHOIR_REAL, which can return null if
+// the symbol genuinely can't be resolved. Calling a null pointer would crash the game, so
+// each hook guards the call and degrades (EGL_FALSE / no-op) instead — fail-safe by design.
 CHOIR_EXPORT EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface surf) {
     uint32_t w, h; egl_extent(dpy, surf, w, h);
     draw_overlay_for(egl_current_ctx(), w, h);
-    return CHOIR_REAL(EGLBoolean (*)(EGLDisplay, EGLSurface), "eglSwapBuffers")(dpy, surf);
+    auto real = CHOIR_REAL(EGLBoolean (*)(EGLDisplay, EGLSurface), "eglSwapBuffers");
+    return real ? real(dpy, surf) : EGLBoolean(0);   // 0 == EGL_FALSE
 }
 CHOIR_EXPORT EGLBoolean eglSwapBuffersWithDamageKHR(EGLDisplay dpy, EGLSurface surf, EGLint* r, EGLint n) {
     uint32_t w, h; egl_extent(dpy, surf, w, h);
     draw_overlay_for(egl_current_ctx(), w, h);
-    return CHOIR_REAL(EGLBoolean (*)(EGLDisplay, EGLSurface, EGLint*, EGLint),
-                      "eglSwapBuffersWithDamageKHR")(dpy, surf, r, n);
+    auto real = CHOIR_REAL(EGLBoolean (*)(EGLDisplay, EGLSurface, EGLint*, EGLint),
+                           "eglSwapBuffersWithDamageKHR");
+    return real ? real(dpy, surf, r, n) : EGLBoolean(0);
 }
 CHOIR_EXPORT EGLBoolean eglSwapBuffersWithDamageEXT(EGLDisplay dpy, EGLSurface surf, EGLint* r, EGLint n) {
     uint32_t w, h; egl_extent(dpy, surf, w, h);
     draw_overlay_for(egl_current_ctx(), w, h);
-    return CHOIR_REAL(EGLBoolean (*)(EGLDisplay, EGLSurface, EGLint*, EGLint),
-                      "eglSwapBuffersWithDamageEXT")(dpy, surf, r, n);
+    auto real = CHOIR_REAL(EGLBoolean (*)(EGLDisplay, EGLSurface, EGLint*, EGLint),
+                           "eglSwapBuffersWithDamageEXT");
+    return real ? real(dpy, surf, r, n) : EGLBoolean(0);
 }
 CHOIR_EXPORT EGLBoolean eglDestroyContext(EGLDisplay dpy, EGLContext ctx) {
     destroy_ctx(ctx);
-    return CHOIR_REAL(EGLBoolean (*)(EGLDisplay, EGLContext), "eglDestroyContext")(dpy, ctx);
+    auto real = CHOIR_REAL(EGLBoolean (*)(EGLDisplay, EGLContext), "eglDestroyContext");
+    return real ? real(dpy, ctx) : EGLBoolean(0);
 }
 
 // ---- GLX -------------------------------------------------------------------------------
@@ -142,11 +161,13 @@ CHOIR_EXPORT void glXSwapBuffers(Display* dpy, GLXDrawable drawable) {
     if (q) { q(dpy, drawable, 0x801D, &w); q(dpy, drawable, 0x801E, &h); }  // GLX_WIDTH/HEIGHT
     auto cur = CHOIR_REAL(GLXContext (*)(), "glXGetCurrentContext");
     draw_overlay_for(cur ? cur() : nullptr, w, h);
-    CHOIR_REAL(void (*)(Display*, GLXDrawable), "glXSwapBuffers")(dpy, drawable);
+    auto real = CHOIR_REAL(void (*)(Display*, GLXDrawable), "glXSwapBuffers");
+    if (real) real(dpy, drawable);
 }
 CHOIR_EXPORT void glXDestroyContext(Display* dpy, GLXContext ctx) {
     destroy_ctx(ctx);
-    CHOIR_REAL(void (*)(Display*, GLXContext), "glXDestroyContext")(dpy, ctx);
+    auto real = CHOIR_REAL(void (*)(Display*, GLXContext), "glXDestroyContext");
+    if (real) real(dpy, ctx);
 }
 
 // ---- GetProcAddress + dlsym interception ----------------------------------------------
