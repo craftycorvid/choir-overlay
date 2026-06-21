@@ -13,11 +13,8 @@ layer_inc = include_directories('.')
 layer_sources = files(
   'layer_entry.cpp',
   'dispatch.cpp',
-  'gating.cpp',
   'swapchain.cpp',
   'imgui_renderer.cpp',
-  'overlay_ui.cpp',
-  'state_client.cpp',
   'avatar_textures.cpp',
 )
 
@@ -60,11 +57,11 @@ layer_version_script = meson.current_source_dir() / 'choir_overlay.version'
 libchoir_overlay = shared_library('choir_overlay',
   layer_sources,
   name_prefix: 'lib',
-  include_directories: [ipc_inc, imgui_backends_inc],
-  link_with: [libchoir_ipc, imgui_backend_lib],  # ipc for later tasks; backend = vendored impl
+  include_directories: [ipc_inc, overlay_inc, imgui_backends_inc],
+  link_with: [libchoir_ipc, libchoir_overlay_shared, imgui_backend_lib],  # ipc for later tasks; backend = vendored impl
   # imgui_dep brings Dear ImGui CORE (no Vulkan backend) + its include dirs.
-  # threads: the state client runs its socket I/O on a std::thread.
-  # json_dep: the state client parses Snapshot/AvatarReady JSON (ipc/state.hpp).
+  # json_dep + threads are pulled in by the shared overlay core (state_client, now in
+  # src/overlay) that we link via libchoir_overlay_shared; pinned here too.
   dependencies: [vulkan_dep, imgui_dep, json_dep, dependency('threads')],
   # Vulkan structs are brace-initialized with just sType; the remaining
   # zero-init is intentional and idiomatic (matches the harness).

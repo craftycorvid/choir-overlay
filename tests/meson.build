@@ -159,7 +159,7 @@ fake_host = executable('fake_host',
 test('fade',
   executable('t_fade',
     'layer/test_fade.cpp',
-    include_directories: layer_inc,
+    include_directories: overlay_inc,
   ),
 )
 

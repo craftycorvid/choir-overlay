@@ -15,6 +15,7 @@
 
 #include <cstdio>
 
+#include "avatar_textures.hpp"  // complete AvatarTextures (derives IAvatarTextures) for the draw_overlay upcast
 #include "dispatch.hpp"
 #include "imgui_vk_backend.hpp"
 #include "overlay_ui.hpp"
@@ -215,7 +216,8 @@ void ImguiRenderer::begin_frame(VkExtent2D extent, const Snapshot* snap,
     // --- The real overlay (Task 17): voice panel + toasts, driven by the snapshot.
     // draw_overlay draws NOTHING when snap is null or !snap->in_voice, so an empty
     // frame is built and end_frame stays balanced (present forwards unchanged). ---
-    if (snap) draw_overlay(*snap, textures, client, extent, now_ms);
+    if (snap) draw_overlay(*snap, textures, client,
+                           choir::Extent2D{extent.width, extent.height}, now_ms);
 
     ImGui::Render();
     frame_started_ = true;

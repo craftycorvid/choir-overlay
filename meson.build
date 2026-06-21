@@ -35,6 +35,7 @@ qt_core_net_dep = dependency('qt6', modules: ['Core', 'Network'])
 
 subdir('src/ipc')
 subdir('src/host')
+subdir('src/overlay')
 subdir('src/layer')
 
 # --- Install-time artifacts (packaging). The layer .so + host binary are installed by
