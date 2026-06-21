@@ -10,7 +10,7 @@
     {
       "id": 8,
       "subject": "Task 8: GL renderer + GlAvatarTextures + vendored imgui_impl_opengl3",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6],
       "description": "Per-context ImGui-OpenGL frame driver + GL avatar-texture cache (IAvatarTextures impl) + vendored imgui_impl_opengl3 in a static lib; reuse shared draw_overlay. Delivers code + clean compile. See plan Task 8.\n\n```json:metadata\n{\"files\": [\"src/gl/gl_api.hpp\", \"src/gl/gl_api.cpp\", \"src/gl/imgui_impl_opengl3_unity.cpp\", \"src/gl/gl_renderer.cpp\", \"src/gl/gl_renderer.hpp\", \"src/gl/gl_avatar_textures.cpp\", \"src/gl/gl_avatar_textures.hpp\", \"src/gl/meson.build\", \"meson.build\"], \"verifyCommand\": \"meson setup --reconfigure build . --buildtype=release && meson compile -C build\", \"acceptanceCriteria\": [\"GlAvatarTextures uploads RGBA8 + caches + shutdown deletes\", \"gl_renderer drives NewFrame->draw_overlay->RenderDrawData with sane clamp\", \"choir_gl_objs compiles with no GL/EGL/GLX dev headers\", \"no GL/EGL/GLX system include in src/gl/\"]}\n```"
     },
