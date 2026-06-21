@@ -37,6 +37,7 @@ subdir('src/ipc')
 subdir('src/host')
 subdir('src/overlay')
 subdir('src/layer')
+subdir('src/gl')
 
 # --- Install-time artifacts (packaging). The layer .so + host binary are installed by
 # their own meson.build (install: true). Here we add the install-time implicit-layer

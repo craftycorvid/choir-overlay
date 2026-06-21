@@ -4,7 +4,7 @@
     {
       "id": 6,
       "subject": "Task 6: Extract shared overlay core (src/overlay/)",
-      "status": "pending",
+      "status": "completed",
       "description": "Move backend-agnostic overlay code (overlay_ui/state_client/gating/fade) into a src/overlay/ static lib behind IAvatarTextures + Extent2D; rebuild the Vulkan layer on top; all existing tests pass. See plan Task 6 for full steps.\n\n```json:metadata\n{\"files\": [\"src/overlay/iavatar_textures.hpp\", \"src/overlay/meson.build\", \"src/overlay/overlay_ui.cpp\", \"src/overlay/overlay_ui.hpp\", \"src/overlay/state_client.cpp\", \"src/overlay/state_client.hpp\", \"src/overlay/gating.cpp\", \"src/overlay/gating.hpp\", \"src/overlay/fade.hpp\", \"src/layer/avatar_textures.hpp\", \"src/layer/imgui_renderer.cpp\", \"src/layer/meson.build\", \"meson.build\", \"tests/meson.build\"], \"verifyCommand\": \"meson setup --reconfigure build . --buildtype=release && meson compile -C build && meson test -C build\", \"acceptanceCriteria\": [\"overlay_ui has no Vk/Vulkan token\", \"IAvatarTextures = lookup + get_or_load only\", \"all 22 existing tests pass\", \"libchoir_overlay.so exports only 3 vk* symbols\"]}\n```"
     },
     {
@@ -36,5 +36,5 @@
       "description": "Per-launch injector choir-run (LD_PRELOAD libchoir_gl.so, baked absolute path, CHOIR_GL_LIB override); install/package the GL lib + wrapper; PKGBUILD pkgdesc mentions OpenGL. See plan Task 9.\n\n```json:metadata\n{\"files\": [\"packaging/choir-run.in\", \"meson.build\", \"packaging/install-user.sh\", \"packaging/PKGBUILD\"], \"verifyCommand\": \"meson install --destdir \\\"$PWD/stage\\\" -C build && find stage -name libchoir_gl.so -o -name choir-run\", \"acceptanceCriteria\": [\"choir-run baked absolute LD_PRELOAD, appends, exec\", \"CHOIR_GL_LIB override\", \"meson install places lib + wrapper\", \"PKGBUILD packages both; pkgdesc mentions OpenGL\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-21"
+  "lastUpdated": "2026-06-21T00:00:01Z"
 }
