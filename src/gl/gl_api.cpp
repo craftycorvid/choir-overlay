@@ -7,14 +7,24 @@ namespace choir::glapi {
 namespace {
 using GetProcEGL = void* (*)(const char*);
 using GetProcGLX = void* (*)(const unsigned char*);
+using DlsymFn = void* (*)(void*, const char*);
+// The genuine libc dlsym, fetched via dlvsym (which libchoir_gl does NOT interpose). The
+// interposer EXPORTS dlsym, so a bare dlsym() call from this object would bind to that hook;
+// routing through real_dlsym keeps our own GL lookups off the hook entirely.
+DlsymFn real_dlsym() {
+    static DlsymFn fn = reinterpret_cast<DlsymFn>(dlvsym(RTLD_NEXT, "dlsym", "GLIBC_2.2.5"));
+    return fn;
+}
 }  // namespace
 void* get_proc(const char* name) {
-    // eglGetProcAddress / glXGetProcAddressARB are themselves resolved via the real
-    // loader (RTLD_NEXT), never our own interposed copies.
-    static auto egl = reinterpret_cast<GetProcEGL>(dlsym(RTLD_NEXT, "eglGetProcAddress"));
-    static auto glx = reinterpret_cast<GetProcGLX>(dlsym(RTLD_NEXT, "glXGetProcAddressARB"));
+    DlsymFn rd = real_dlsym();
+    if (!rd) return nullptr;
+    // eglGetProcAddress / glXGetProcAddressARB resolved via the genuine next loader
+    // (RTLD_NEXT through real dlsym), never our own interposed copies.
+    static auto egl = reinterpret_cast<GetProcEGL>(rd(RTLD_NEXT, "eglGetProcAddress"));
+    static auto glx = reinterpret_cast<GetProcGLX>(rd(RTLD_NEXT, "glXGetProcAddressARB"));
     if (egl) { if (void* p = egl(name)) return p; }
     if (glx) { if (void* p = glx(reinterpret_cast<const unsigned char*>(name))) return p; }
-    return dlsym(RTLD_NEXT, name);
+    return rd(RTLD_NEXT, name);
 }
 }  // namespace choir::glapi
