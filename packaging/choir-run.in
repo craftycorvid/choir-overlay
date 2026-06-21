@@ -7,7 +7,11 @@
 # (v1 is 64-bit only; 32-bit support is a later add via a lib32 build + $LIB selection.)
 lib="${CHOIR_GL_LIB:-@CHOIR_GL_LIB@}"
 if [ -e "$lib" ]; then
-  export LD_PRELOAD="${LD_PRELOAD:+$LD_PRELOAD:}$lib"
+  # PREPEND (not append) to any existing LD_PRELOAD so Choir loads FIRST. If another GL
+  # overlay is already injected (e.g. MangoHud), the first interposer wins the hook and
+  # chains down to the rest; appending would put Choir last, where the earlier overlay can
+  # resolve the real swap directly and bypass us. Choir first => Choir always draws.
+  export LD_PRELOAD="$lib${LD_PRELOAD:+:$LD_PRELOAD}"
 else
   # Don't preload a missing path: the loader would emit a warning for the game AND every
   # child process it spawns. Launch the game anyway without the overlay — a misconfigured

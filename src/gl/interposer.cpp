@@ -112,13 +112,13 @@ void read_comm(char* buf, size_t n) {
 // code runs in the target process and (b) its stderr reaches the log you're reading. If you
 // see this line but no "first swap" line, we're injected but the swap isn't routing through us.
 __attribute__((constructor)) void on_load() {
-    if (!gl_debug()) return;
+    // VERBOSE-only (CHOIR_GL_DEBUG=2): LD_PRELOAD is inherited by every child the game spawns
+    // (jspawnhelper, sh, xprop, …), so logging each load is noise at the normal level. Level 1
+    // shows the meaningful "first swap"/"gate" lines for the actual GL process; bump to 2 to
+    // confirm injection per-process.
+    if (!gl_verbose()) return;
     char comm[64]; read_comm(comm, sizeof comm);
-    // The JVM fork+execs jspawnhelper for every subprocess; it never does GL, so skip the
-    // log spam (LD_PRELOAD is inherited by all children).
-    if (std::strcmp(comm, "jspawnhelper") == 0) return;
-    CHOIR_GL_LOG("loaded into pid=%ld comm=\"%s\" (CHOIR_GL_DEBUG on)",
-                 static_cast<long>(getpid()), comm);
+    CHOIR_GL_VLOG("loaded into pid=%ld comm=\"%s\"", static_cast<long>(getpid()), comm);
 }
 
 // Log once, on the first swap of any API: proves a hooked swap is actually reaching us.
