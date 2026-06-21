@@ -17,14 +17,14 @@
     {
       "id": 7,
       "subject": "Task 7: GL interposer (libchoir_gl.so)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6, 8],
       "description": "LD_PRELOAD lib hooking eglSwapBuffers/glXSwapBuffers (+ damage, destroy, dlsym/*GetProcAddress); gate via shared gating/StateClient; lazy per-context GlRenderer+GlAvatarTextures; draw; real swap; never crash. See plan Task 7.\n\n```json:metadata\n{\"files\": [\"src/gl/interposer.cpp\", \"src/gl/choir_gl.version\", \"src/gl/meson.build\"], \"verifyCommand\": \"meson compile -C build && ldd build/src/gl/libchoir_gl.so | grep -E 'libEGL|libGLX'; nm -CD build/src/gl/libchoir_gl.so | grep ' T '\", \"acceptanceCriteria\": [\"no libEGL/libGLX in ldd\", \"exports only the 10 hook symbols, no ImGui/choir globals\", \"dlsym chains via dlvsym without recursion\", \"gate->lazy-init->draw->real-swap; failure->skip->real-swap\", \"ctx map mutex-guarded; destroy hooks free state\"]}\n```"
     },
     {
       "id": 10,
       "subject": "Task 10: Headless EGL golden test",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6, 8],
       "description": "Offscreen EGL pbuffer GL context; render overlay (one real avatar) through GlRenderer+GlAvatarTextures; glReadPixels; assert it drew. Exit 77 SKIP if no EGL. See plan Task 10.\n\n```json:metadata\n{\"files\": [\"tests/gl/test_gl_golden.cpp\", \"tests/meson.build\"], \"verifyCommand\": \"meson setup --reconfigure build . --buildtype=release && meson test -C build gl_golden -v\", \"acceptanceCriteria\": [\"EGL pbuffer + RGBA8 FBO; exit 77 SKIP when no context\", \"synthetic Snapshot + on-disk avatar pre-loaded\", \"panel-region pixel != bg AND far-corner = bg\", \"registered under build_tests and passes\"]}\n```"
     },
