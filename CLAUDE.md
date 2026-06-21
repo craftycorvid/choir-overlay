@@ -49,4 +49,5 @@ Dear ImGui is vendored (`subprojects/`), built **static** into the layer with
 
 `DISABLE_CHOIR_OVERLAY=1` (off for one launch) · `CHOIR_DEBUG_FORMAT=1` (log swapchain
 format/colorspace/transfer/nits) · `CHOIR_HDR_NITS=<80..1000>` · `CHOIR_DEBUG_LAZY_INIT=1` ·
-`CHOIR_DEBUG_AVATARS=1` · `CHOIR_SOCKET=<name>` (abstract-socket override).
+`CHOIR_DEBUG_AVATARS=1` · `CHOIR_SOCKET=<name>` (abstract-socket override) ·
+`CHOIR_GL_DEBUG=1` (GL interposer: log injection + comm-name + gating decision + per-context init).

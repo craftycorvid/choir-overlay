@@ -7,9 +7,13 @@
 #define _GNU_SOURCE   // dlvsym / RTLD_NEXT (usually set by the build's command line too)
 #endif
 #include <dlfcn.h>
+#include <unistd.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -47,6 +51,61 @@ DlsymFn real_dlsym() {
                                    : static_cast<T>(nullptr);                   \
     return _fn; }())
 
+// --- Opt-in debug logging: CHOIR_GL_DEBUG=1. Off (and near-zero overhead) otherwise. The
+// GL interposer is silent by default; this is the GL counterpart to the layer's CHOIR_DEBUG_*
+// toggles, for diagnosing "no overlay in <game>" (is the lib injected? what comm does the host
+// see for gating? which gate blocked drawing? did the per-context renderer init fail?). ---
+bool gl_debug() {
+    static const bool on = [] {
+        const char* v = std::getenv("CHOIR_GL_DEBUG");
+        return v && v[0] == '1';
+    }();
+    return on;
+}
+#define CHOIR_GL_LOG(...) do { if (gl_debug()) {                 \
+    std::fprintf(stderr, "[choir-gl] " __VA_ARGS__);             \
+    std::fputc('\n', stderr); } } while (0)
+
+// Log once, on the first swap of any API: proves the interposer is live in this process and
+// prints the comm-name the host uses for denylist gating (e.g. "java" for a Prism Minecraft).
+void log_banner_once(const char* api) {
+    static std::atomic<bool> done{false};
+    if (!gl_debug() || done.exchange(true)) return;
+    char comm[64] = {0};
+    if (FILE* f = std::fopen("/proc/self/comm", "re")) {
+        if (std::fgets(comm, sizeof comm, f)) comm[strcspn(comm, "\n")] = '\0';
+        std::fclose(f);
+    }
+    CHOIR_GL_LOG("interposer live: pid=%ld comm=\"%s\"; first swap via %s",
+                 static_cast<long>(getpid()), comm, api);
+}
+
+// Log the gating decision only when it CHANGES (so the hot path doesn't spam per frame).
+enum Gate { kDrawing, kEnvDisabled, kHostDisabled, kNoSnapshot, kNotInVoice, kNullCtx };
+void log_gate(Gate g) {
+    static std::atomic<int> last{-1};
+    if (!gl_debug() || last.exchange(g) == g) return;
+    static const char* const names[] = {
+        "DRAWING", "DISABLE_CHOIR_OVERLAY is set", "host sent Disabled (denylisted exe?)",
+        "no host snapshot yet (is `choir` running + connected?)",
+        "not in a voice channel", "no current GL context",
+    };
+    CHOIR_GL_LOG("gate -> %s", names[g]);
+}
+
+// Last-resort surface extent from the GL viewport (reflects the app's last glViewport, i.e.
+// the drawable size). Used when the windowing query returns 0 — common for raw-Window GLX
+// drawables, where glXQueryDrawable(GLX_WIDTH/HEIGHT) is not guaranteed to report geometry.
+// Safe: only called from a swap hook, where a context is current.
+void viewport_extent(uint32_t& w, uint32_t& h) {
+    using GetIntegerv = void (*)(GLenum, GLint*);
+    static auto fn = reinterpret_cast<GetIntegerv>(glapi::get_proc("glGetIntegerv"));
+    if (!fn) return;
+    GLint vp[4] = {0, 0, 0, 0};
+    fn(0x0BA2 /* GL_VIEWPORT */, vp);
+    if (vp[2] > 0 && vp[3] > 0) { w = uint32_t(vp[2]); h = uint32_t(vp[3]); }
+}
+
 // Per-GL-context overlay state. Created lazily on first swap for a context; freed by the
 // destroy hooks. `skip` latches a failed init so we stop retrying for that context.
 struct CtxState {
@@ -67,21 +126,36 @@ int64_t now_ms() {
 
 // Shared draw path for EGL and GLX. `ctx_key` = current GL context handle; (w,h) = extent.
 void draw_overlay_for(void* ctx_key, uint32_t w, uint32_t h) {
-    if (ctx_key == nullptr || overlay_disabled()) return;
+    if (ctx_key == nullptr) { log_gate(kNullCtx); return; }
+    if (overlay_disabled()) { log_gate(kEnvDisabled); return; }
     StateClient& client = StateClient::instance();
-    if (client.disabled()) return;
+    if (client.disabled()) { log_gate(kHostDisabled); return; }
     std::shared_ptr<const Snapshot> snap = client.latest();
-    if (!snap || !snap->in_voice) return;   // nothing to draw -> skip all GL work
+    if (!snap) { log_gate(kNoSnapshot); return; }
+    if (!snap->in_voice) { log_gate(kNotInVoice); return; }   // skip all GL work when idle
+    log_gate(kDrawing);
 
     CtxState* st = nullptr;
     {
         std::lock_guard<std::mutex> lk(g_mutex);
         auto it = g_ctxs.find(ctx_key);
-        if (it == g_ctxs.end()) { st = new CtxState(); g_ctxs.emplace(ctx_key, st); }
-        else st = it->second;
+        if (it == g_ctxs.end()) {
+            st = new CtxState();
+            g_ctxs.emplace(ctx_key, st);
+            CHOIR_GL_LOG("new GL context %p", ctx_key);
+        } else {
+            st = it->second;
+        }
     }
     if (st->skip) return;
-    if (!st->renderer.ready() && !st->renderer.init()) { st->skip = true; return; }
+    if (!st->renderer.ready() && !st->renderer.init()) {
+        st->skip = true;
+        CHOIR_GL_LOG("context %p: GlRenderer init FAILED; overlay disabled for it", ctx_key);
+        return;
+    }
+    static std::atomic<bool> drew{false};
+    if (!drew.exchange(true))
+        CHOIR_GL_LOG("drawing overlay: ctx=%p extent=%ux%u", ctx_key, w, h);
     st->renderer.draw(snap.get(), st->textures, client, Extent2D{w, h}, now_ms());
 }
 
@@ -117,6 +191,7 @@ void egl_extent(EGLDisplay dpy, EGLSurface surf, uint32_t& w, uint32_t& h) {
     if (q) { q(dpy, surf, 0x3057, &ww); q(dpy, surf, 0x3056, &hh); }
     w = ww > 0 ? uint32_t(ww) : 0u;
     h = hh > 0 ? uint32_t(hh) : 0u;
+    if (w == 0 || h == 0) viewport_extent(w, h);   // fallback when the surface query is unset
 }
 void* egl_current_ctx() {
     auto f = CHOIR_REAL(EGLContext (*)(), "eglGetCurrentContext");
@@ -129,12 +204,14 @@ void* egl_current_ctx() {
 // the symbol genuinely can't be resolved. Calling a null pointer would crash the game, so
 // each hook guards the call and degrades (EGL_FALSE / no-op) instead — fail-safe by design.
 CHOIR_EXPORT EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface surf) {
+    log_banner_once("eglSwapBuffers");
     uint32_t w, h; egl_extent(dpy, surf, w, h);
     draw_overlay_for(egl_current_ctx(), w, h);
     auto real = CHOIR_REAL(EGLBoolean (*)(EGLDisplay, EGLSurface), "eglSwapBuffers");
     return real ? real(dpy, surf) : EGLBoolean(0);   // 0 == EGL_FALSE
 }
 CHOIR_EXPORT EGLBoolean eglSwapBuffersWithDamageKHR(EGLDisplay dpy, EGLSurface surf, EGLint* r, EGLint n) {
+    log_banner_once("eglSwapBuffersWithDamageKHR");
     uint32_t w, h; egl_extent(dpy, surf, w, h);
     draw_overlay_for(egl_current_ctx(), w, h);
     auto real = CHOIR_REAL(EGLBoolean (*)(EGLDisplay, EGLSurface, EGLint*, EGLint),
@@ -142,6 +219,7 @@ CHOIR_EXPORT EGLBoolean eglSwapBuffersWithDamageKHR(EGLDisplay dpy, EGLSurface s
     return real ? real(dpy, surf, r, n) : EGLBoolean(0);
 }
 CHOIR_EXPORT EGLBoolean eglSwapBuffersWithDamageEXT(EGLDisplay dpy, EGLSurface surf, EGLint* r, EGLint n) {
+    log_banner_once("eglSwapBuffersWithDamageEXT");
     uint32_t w, h; egl_extent(dpy, surf, w, h);
     draw_overlay_for(egl_current_ctx(), w, h);
     auto real = CHOIR_REAL(EGLBoolean (*)(EGLDisplay, EGLSurface, EGLint*, EGLint),
@@ -156,9 +234,12 @@ CHOIR_EXPORT EGLBoolean eglDestroyContext(EGLDisplay dpy, EGLContext ctx) {
 
 // ---- GLX -------------------------------------------------------------------------------
 CHOIR_EXPORT void glXSwapBuffers(Display* dpy, GLXDrawable drawable) {
+    log_banner_once("glXSwapBuffers");
     auto q = CHOIR_REAL(void (*)(Display*, GLXDrawable, int, unsigned int*), "glXQueryDrawable");
-    unsigned int w = 0, h = 0;
-    if (q) { q(dpy, drawable, 0x801D, &w); q(dpy, drawable, 0x801E, &h); }  // GLX_WIDTH/HEIGHT
+    unsigned int qw = 0, qh = 0;
+    if (q) { q(dpy, drawable, 0x801D, &qw); q(dpy, drawable, 0x801E, &qh); }  // GLX_WIDTH/HEIGHT
+    uint32_t w = qw, h = qh;
+    if (w == 0 || h == 0) viewport_extent(w, h);   // raw-Window drawables don't report geometry
     auto cur = CHOIR_REAL(GLXContext (*)(), "glXGetCurrentContext");
     draw_overlay_for(cur ? cur() : nullptr, w, h);
     auto real = CHOIR_REAL(void (*)(Display*, GLXDrawable), "glXSwapBuffers");
