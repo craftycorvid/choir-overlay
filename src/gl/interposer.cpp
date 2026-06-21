@@ -42,13 +42,34 @@ DlsymFn real_dlsym() {
     return fn;
 }
 
-// Resolve+cache the real NEXT implementation of `name` (signature T) ONCE PER CALL SITE.
-// The lambda gives each textual use its own static, so two entrypoints that share a C
-// signature don't collide. Resolved via real_dlsym() + RTLD_NEXT so a hooked name (e.g.
-// eglSwapBuffers) resolves to the genuine next function, never back into our own hook.
+// Resolve the REAL implementation of a GLX/EGL/GL function `name`. RTLD_NEXT only searches
+// globally-visible objects — but GLFW (Minecraft/LWJGL) dlopens libGLX/libGL/libEGL with
+// RTLD_LOCAL, so their symbols are NOT global and RTLD_NEXT returns null for the real swap /
+// current-context / query functions (=> we'd never present the frame => black screen, and
+// never find the context => never draw). Fall back to dlopening the already-mapped vendor
+// libs (RTLD_NOLOAD: don't force-load any we don't have) and resolving from their handles.
+// Never uses RTLD_DEFAULT: that would find our OWN exported hook first and recurse.
+void* real_gl_proc(const char* name) {
+    DlsymFn rd = real_dlsym();
+    if (!rd) return nullptr;
+    if (void* p = rd(RTLD_NEXT, name)) return p;
+    static const char* const libs[] = {
+        "libGLX.so.0", "libGL.so.1", "libEGL.so.1", "libOpenGL.so.0",
+    };
+    for (const char* lib : libs) {
+        if (void* h = dlopen(lib, RTLD_LAZY | RTLD_NOLOAD)) {
+            if (void* p = rd(h, name)) return p;
+        }
+    }
+    return nullptr;
+}
+
+// Resolve+cache the real implementation of `name` (signature T) ONCE PER CALL SITE. The
+// lambda gives each textual use its own static, so two entrypoints that share a C signature
+// don't collide. Goes through real_gl_proc (RTLD_NEXT + vendor-lib fallback) so it never
+// resolves back into our own hook and reaches RTLD_LOCAL-loaded vendor libs.
 #define CHOIR_REAL(T, name) ([]() -> T {                                       \
-    static auto _fn = real_dlsym() ? reinterpret_cast<T>(real_dlsym()(RTLD_NEXT, name)) \
-                                   : static_cast<T>(nullptr);                   \
+    static auto _fn = reinterpret_cast<T>(real_gl_proc(name));                 \
     return _fn; }())
 
 // --- Opt-in debug logging: CHOIR_GL_DEBUG=1. Off (and near-zero overhead) otherwise. The
