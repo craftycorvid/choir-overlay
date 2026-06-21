@@ -1,4 +1,13 @@
-CHOIR_GL_1 {
+# ANONYMOUS version node (no name before the brace): exports these symbols UNVERSIONED while
+# still hiding everything else (local: *). This is load-bearing for interposition. A NAMED
+# node (e.g. CHOIR_GL_1 { ... }) would stamp our hooks as `sym@@CHOIR_GL_1` — a versioned
+# definition, which only satisfies references carrying that exact version. Toolkits like
+# GLFW (Minecraft/LWJGL) resolve the swap via `dlsym(handle, "glXSwapBuffers")`, and their
+# `dlsym` reference is the versioned `dlsym@GLIBC_2.34`; a versioned `dlsym@@CHOIR_GL_1`
+# would NOT satisfy it, so the call falls through to the real libc dlsym and bypasses us.
+# Unversioned (base) definitions satisfy BOTH versioned and unversioned references — the
+# standard way an LD_PRELOAD interposer overrides versioned libc symbols (dlsym, malloc, …).
+{
   global:
     eglSwapBuffers;
     eglSwapBuffersWithDamageKHR;
