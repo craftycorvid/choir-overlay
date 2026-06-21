@@ -55,16 +55,27 @@ DlsymFn real_dlsym() {
 // GL interposer is silent by default; this is the GL counterpart to the layer's CHOIR_DEBUG_*
 // toggles, for diagnosing "no overlay in <game>" (is the lib injected? what comm does the host
 // see for gating? which gate blocked drawing? did the per-context renderer init fail?). ---
-bool gl_debug() {
-    static const bool on = [] {
+int gl_debug_level() {
+    static const int lvl = [] {
         const char* v = std::getenv("CHOIR_GL_DEBUG");
-        return v && v[0] == '1';
+        return v ? std::atoi(v) : 0;
     }();
-    return on;
+    return lvl;
 }
+bool gl_debug() { return gl_debug_level() >= 1; }      // CHOIR_GL_DEBUG=1: normal
+bool gl_verbose() { return gl_debug_level() >= 2; }    // CHOIR_GL_DEBUG=2: + resolver trace
 #define CHOIR_GL_LOG(...) do { if (gl_debug()) {                 \
     std::fprintf(stderr, "[choir-gl] " __VA_ARGS__);             \
     std::fputc('\n', stderr); } } while (0)
+#define CHOIR_GL_VLOG(...) do { if (gl_verbose()) {              \
+    std::fprintf(stderr, "[choir-gl] " __VA_ARGS__);             \
+    std::fputc('\n', stderr); } } while (0)
+
+// Names worth tracing at verbose level (the GL/EGL/GLX resolution we care about).
+bool is_gl_name(const char* n) {
+    return n && (std::strstr(n, "SwapBuffers") || std::strstr(n, "GetProcAddress") ||
+                 std::strncmp(n, "glX", 3) == 0 || std::strncmp(n, "egl", 3) == 0);
+}
 
 // Read /proc/self/comm (the name the host uses for denylist gating) into `buf`.
 void read_comm(char* buf, size_t n) {
@@ -305,24 +316,28 @@ void* hook_for(const char* name) {
 }  // namespace
 
 CHOIR_EXPORT void* eglGetProcAddress(const char* name) {
+    CHOIR_GL_VLOG("eglGetProcAddress(\"%s\")", name ? name : "(null)");
     if (void* h = hook_for(name)) { log_resolve("eglGetProcAddress", name); return h; }
     auto f = CHOIR_REAL(void* (*)(const char*), "eglGetProcAddress");
     return f ? f(name) : nullptr;
 }
 CHOIR_EXPORT void* glXGetProcAddressARB(const unsigned char* name) {
     const char* nm = reinterpret_cast<const char*>(name);
+    CHOIR_GL_VLOG("glXGetProcAddressARB(\"%s\")", nm ? nm : "(null)");
     if (void* h = hook_for(nm)) { log_resolve("glXGetProcAddressARB", nm); return h; }
     auto f = CHOIR_REAL(void* (*)(const unsigned char*), "glXGetProcAddressARB");
     return f ? f(name) : nullptr;
 }
 CHOIR_EXPORT void* glXGetProcAddress(const unsigned char* name) {
     const char* nm = reinterpret_cast<const char*>(name);
+    CHOIR_GL_VLOG("glXGetProcAddress(\"%s\")", nm ? nm : "(null)");
     if (void* h = hook_for(nm)) { log_resolve("glXGetProcAddress", nm); return h; }
     auto f = CHOIR_REAL(void* (*)(const unsigned char*), "glXGetProcAddress");
     return f ? f(name) : nullptr;
 }
 CHOIR_EXPORT void* dlsym(void* handle, const char* name) {
     if (void* h = hook_for(name)) { log_resolve("dlsym", name); return h; }
+    if (gl_verbose() && is_gl_name(name)) CHOIR_GL_VLOG("dlsym(\"%s\") -> real", name);
     DlsymFn rd = real_dlsym();
     return rd ? rd(handle, name) : nullptr;
 }
