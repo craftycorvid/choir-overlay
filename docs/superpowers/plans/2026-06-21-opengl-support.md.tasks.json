@@ -31,10 +31,10 @@
     {
       "id": 9,
       "subject": "Task 9: choir-run wrapper + packaging",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [7],
       "description": "Per-launch injector choir-run (LD_PRELOAD libchoir_gl.so, baked absolute path, CHOIR_GL_LIB override); install/package the GL lib + wrapper; PKGBUILD pkgdesc mentions OpenGL. See plan Task 9.\n\n```json:metadata\n{\"files\": [\"packaging/choir-run.in\", \"meson.build\", \"packaging/install-user.sh\", \"packaging/PKGBUILD\"], \"verifyCommand\": \"meson install --destdir \\\"$PWD/stage\\\" -C build && find stage -name libchoir_gl.so -o -name choir-run\", \"acceptanceCriteria\": [\"choir-run baked absolute LD_PRELOAD, appends, exec\", \"CHOIR_GL_LIB override\", \"meson install places lib + wrapper\", \"PKGBUILD packages both; pkgdesc mentions OpenGL\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-21T00:00:01Z"
+  "lastUpdated": "2026-06-21T00:00:02Z"
 }
