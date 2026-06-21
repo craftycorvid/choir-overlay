@@ -4,11 +4,11 @@
 pkgname=choir-overlay-git
 pkgver=r65.g25f404f
 pkgrel=1
-pkgdesc="Wayland Discord voice overlay for Vulkan games (not affiliated with Discord Inc.)"
+pkgdesc="Wayland Discord voice overlay for Vulkan + OpenGL games (not affiliated with Discord Inc.)"
 arch=('x86_64')
 url="https://github.com/craftycorvid/choir-overlay"
 license=('MIT')
-depends=('qt6-base' 'vulkan-icd-loader')
+depends=('qt6-base' 'vulkan-icd-loader' 'libglvnd')
 makedepends=('git' 'meson' 'vulkan-headers')
 provides=('choir-overlay')
 conflicts=('choir-overlay')
