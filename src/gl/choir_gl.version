@@ -1,0 +1,15 @@
+CHOIR_GL_1 {
+  global:
+    eglSwapBuffers;
+    eglSwapBuffersWithDamageKHR;
+    eglSwapBuffersWithDamageEXT;
+    glXSwapBuffers;
+    eglDestroyContext;
+    glXDestroyContext;
+    eglGetProcAddress;
+    glXGetProcAddress;
+    glXGetProcAddressARB;
+    dlsym;
+  local:
+    *;
+};
