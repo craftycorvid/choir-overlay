@@ -186,9 +186,10 @@ int main() {
     //   panel size    = (kPanelWidth=220, pad*2 + kRowHeight = 20 + 32 = 52)
     //   anchored pos   = (margin=16, (H-52)/2 = 154)
     //   row left       = pos.x + pad = 26 ; avatar diameter = 32
-    //   avatar center  = (26 + 16, 154 + pad + 16) = (42, 170)
-    // (42,170) lands on the avatar disc (here: our solid red avatar image), which is
-    // painted by the draw list independent of the font atlas -> robust.
+    //   avatar center  = (26 + 16, 164 + 16) = (42, 180)   (avatar top = pos.y + pad = 164)
+    // We sample (42,170): 10px above center, still well inside the radius-16 disc (here:
+    // our solid red avatar image), painted by the draw list independent of the font atlas
+    // -> robust.
     const uint8_t* panel = at(42, 170);
     const uint8_t* far = at(W - 4, 4);  // top-right corner: far from the CenterLeft panel
     const bool panel_drawn = !is_bg(panel);
