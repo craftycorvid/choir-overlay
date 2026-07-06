@@ -22,6 +22,9 @@
 #include <vulkan/vulkan.h>
 
 #include <atomic>
+#include <cstdint>
+#include <utility>
+#include <vector>
 
 namespace choir {
 
@@ -159,6 +162,15 @@ struct DeviceData {
     // create. Avatar texture upload (Task 16) needs it to pick a device-local /
     // host-visible memory type for the image + staging buffer.
     PFN_vkGetPhysicalDeviceMemoryProperties get_phys_mem_props = nullptr;
+    // Every queue the app created, (VkQueue -> family), captured at vkCreateDevice
+    // via vkGetDeviceQueue (families created with flags — protected-capable — are
+    // skipped; their queues stay unknown). Immutable after CreateDevice, so the
+    // present hook may read it lock-free. Lets the present hook identify which
+    // FAMILY a present arrives on: our overlay command buffers are graphics render
+    // passes allocated on `graphics_queue_family`, and submitting them to a queue of
+    // any other family (gamescope presents its composite on a COMPUTE-only queue) is
+    // invalid Vulkan that intermittently hangs the GPU.
+    std::vector<std::pair<VkQueue, uint32_t>> queue_families;
 };
 
 // --- Hooked entrypoints (definitions in dispatch.cpp) ---
@@ -177,6 +189,10 @@ VKAPI_ATTR void VKAPI_CALL DestroyDevice(VkDevice device,
 // --- Per-handle data lookup (used by future hooks; keyed by loader dispatch key) ---
 InstanceData* instance_data(void* dispatchable_handle);
 DeviceData* device_data(void* dispatchable_handle);
+
+// The queue family `queue` belongs to, from DeviceData::queue_families; UINT32_MAX
+// when unknown (a queue we could not enumerate at CreateDevice — e.g. protected).
+uint32_t queue_family_for(const DeviceData* dd, VkQueue queue);
 
 // Trip the per-device overlay-off latch (Task 18) and log the reason ONCE to stderr
 // (the very first trip for this device). After this the present hook forwards the

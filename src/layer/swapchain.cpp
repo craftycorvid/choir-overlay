@@ -297,39 +297,45 @@ bool build_state(SwapchainState& s, VkSwapchainKHR swapchain) {
     return true;
 }
 
-// Wait for an image's fence (so its command buffer is safe to reuse) and record the
-// overlay render pass into it. Returns the ImageState* on success, nullptr on any
-// failure. Does NOT reset the fence or submit — the present hook resets the fence
-// immediately before its single batched submit (across all swapchains, so the app's
-// render-finished semaphores are waited exactly once). Resetting at submit time, not
-// here, means a recording failure never leaves a reset-but-unsubmitted fence that a
-// later UINT64_MAX wait would block on forever.
-ImageState* record_one(SwapchainState& s, uint32_t image_index) {
-    if (!s.ok || image_index >= s.images.size()) return nullptr;
+// What the present hook should do for one (swapchain, image) after record_one.
+//   Drawn   — overlay commands recorded; submit them and chain the present.
+//   Skipped — nothing to draw for this swapchain (host-disabled process, renderer not
+//             (yet) initialized, or an empty frame — not in voice). NO fence wait, NO
+//             recording, NO submit happened: with no Drawn entries the present must be
+//             forwarded UNTOUCHED. This is what keeps the layer invisible to processes
+//             it must never disturb — gamescope itself (host-denylisted) is a
+//             latency-critical compositor whose present pacing must not carry overlay
+//             render passes, and every game gets zero overlay GPU work until the user
+//             is actually in voice.
+//   Failed  — something went wrong; fall back to forwarding the real present.
+enum class RecordResult { Drawn, Skipped, Failed };
+
+// Build this frame's overlay draw list and, when it has visible content, wait for the
+// image's fence (so its command buffer is safe to reuse) and record the overlay render
+// pass into it (returned via *out). Does NOT reset the fence or submit — the present
+// hook resets the fence immediately before its single batched submit (across all
+// swapchains, so the app's render-finished semaphores are waited exactly once).
+// Resetting at submit time, not here, means a recording failure never leaves a
+// reset-but-unsubmitted fence that a later UINT64_MAX wait would block on forever.
+RecordResult record_one(SwapchainState& s, uint32_t image_index, ImageState** out) {
+    *out = nullptr;
+    if (!s.ok || image_index >= s.images.size()) return RecordResult::Failed;
     const DeviceDispatch& d = s.dd->disp;
     VkDevice dev = s.device;
     ImageState& img = s.images[image_index];
 
-    // Wait on this image's fence ONLY if a prior submit is actually in flight on it.
-    // If it isn't (first use, or a previous frame failed before/while submitting),
-    // the command buffer is not in use and the fence may be unsignaled — waiting on
-    // it would hang. The fence is reset + signalled only by the submit below.
-    if (img.fence_in_flight &&
-        d.WaitForFences(dev, 1, &img.fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS)
-        return nullptr;
-
     // The layer's process-singleton state client (lazily started on first reference).
-    // If the host sent a Disabled frame for this process, draw nothing — fall through
-    // to an empty (LOAD-only) overlay pass. (DISABLE_CHOIR_OVERLAY is handled earlier
-    // in QueuePresentKHR; this is the host-driven denylist path.)
+    // If the host sent a Disabled frame for this process (the denylist: gamescope,
+    // OBS, browsers, ...), contribute NOTHING to its frames — no fence wait, no
+    // recording, no submit. (DISABLE_CHOIR_OVERLAY is handled earlier in
+    // QueuePresentKHR; this is the host-driven denylist path.)
     StateClient& client = StateClient::instance();
-    const bool host_disabled = client.disabled();
+    if (client.disabled()) return RecordResult::Skipped;
 
-    // Read the latest published snapshot (lock-free). Null until the host sends one (or
-    // when host-disabled). The overlay is invisible until we are actually in a voice
-    // channel (snap && snap->in_voice).
-    std::shared_ptr<const Snapshot> snapshot =
-        host_disabled ? nullptr : client.latest();
+    // Read the latest published snapshot (lock-free). Null until the host sends one.
+    // The overlay is invisible until we are actually in a voice channel
+    // (snap && snap->in_voice).
+    std::shared_ptr<const Snapshot> snapshot = client.latest();
     const bool in_voice = snapshot && snapshot->in_voice;
 
     // --- LAZY OVERLAY INIT (Task 18) ---------------------------------------------
@@ -340,7 +346,7 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
     // dispatch passthrough + the state-client socket attempt. Once allocated we KEEP
     // the renderer for the swapchain's lifetime; later in_voice toggles just gate
     // drawing (no per-toggle teardown/realloc thrash).
-    if (in_voice && !host_disabled && !s.imgui_tried) {
+    if (in_voice && !s.imgui_tried) {
         s.imgui_tried = true;
         s.imgui = std::make_unique<ImguiRenderer>();
         if (!s.imgui->init(s.dd->instance, s.dd->physical_device, s.device,
@@ -359,11 +365,13 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
         }
     }
 
-    const bool renderer_ready = s.imgui && s.imgui->ready();
+    // No renderer (never been in voice, or init failed): nothing can ever draw this
+    // present — skip all GPU work and leave the present untouched.
+    if (!s.imgui || !s.imgui->ready()) return RecordResult::Skipped;
 
     // Once the renderer is ready, create the avatar texture cache bound to it (it uses
     // the renderer's device + descriptor pool). Created once per swapchain.
-    if (renderer_ready && !s.avatars) {
+    if (!s.avatars) {
         s.avatars = std::make_unique<AvatarTextures>();
         // Avatars upload as raw UNORM; the overlay's HDR fragment shader applies the
         // transfer (sRGB->linear + HDR) to the final color, icons included.
@@ -371,32 +379,28 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
     }
 
     // Build the ImGui draw list for this frame BEFORE recording the render pass
-    // (ImGui::NewFrame/Render record no GPU commands). With no renderer, or when the
-    // host disabled this process, this is a no-op and the render pass below just LOADs
-    // the app's frame unchanged. draw_overlay itself draws nothing when the snapshot is
-    // null or !in_voice.
+    // (ImGui::NewFrame/Render record no GPU commands). draw_overlay itself draws
+    // nothing when the snapshot is null or !in_voice — that empty frame is detected
+    // below and the whole overlay pass is skipped.
     //
     // FAILURE ISOLATION (Task 18): the entire overlay block — avatar uploads (Vulkan),
     // begin_frame (ImGui NewFrame + our draw_overlay), end_frame (ImGui draw-data
     // record) — is wrapped in try/catch. ImGui can assert/abort/throw on misuse and the
     // avatar upload can throw (bad_alloc, etc.). On ANY exception we trip the per-device
-    // overlay-off latch and return nullptr; the present hook then forwards the REAL
+    // overlay-off latch and return Failed; the present hook then forwards the REAL
     // present so the frame still displays. We must not let a C++ exception unwind into
     // the C app, and we must not re-touch ImGui after a throw (its frame state may be
     // inconsistent) — the latch guarantees that.
-    bool draw_imgui = renderer_ready && !host_disabled && s.avatars;
     try {
         // Eagerly drain any pending avatar-load requests and upload them on THIS
         // (render) thread — the only thread that may call Vulkan. Best-effort warm-up;
         // draw_overlay resolves each participant's texture by hash on demand. Cached by
-        // hash, so repeats are cheap. Skip when host-disabled.
-        if (renderer_ready && s.avatars && !host_disabled) {
-            for (const AvatarReq& req : client.drain_avatar_requests())
-                s.avatars->get_or_load(req);
-            if (const char* dbg = ::getenv("CHOIR_DEBUG_AVATARS"); dbg && *dbg)
-                std::fprintf(stderr, "[choir] avatar textures loaded: %zu\n",
-                             s.avatars->size());
-        }
+        // hash, so repeats are cheap.
+        for (const AvatarReq& req : client.drain_avatar_requests())
+            s.avatars->get_or_load(req);
+        if (const char* dbg = ::getenv("CHOIR_DEBUG_AVATARS"); dbg && *dbg)
+            std::fprintf(stderr, "[choir] avatar textures loaded: %zu\n",
+                         s.avatars->size());
 
         // Wall-clock ms for toast expiry: the host stamps Notification.created_ms with
         // std::chrono::system_clock ms, so read the same clock domain here.
@@ -405,15 +409,33 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
                 std::chrono::system_clock::now().time_since_epoch())
                 .count();
 
-        if (draw_imgui)
-            s.imgui->begin_frame(s.extent, snapshot.get(), *s.avatars, client, now_ms);
+        s.imgui->begin_frame(s.extent, snapshot.get(), *s.avatars, client, now_ms);
     } catch (...) {
         // Tear down any started ImGui frame defensively, then latch overlay off.
-        if (draw_imgui && s.imgui) {
+        if (s.imgui) {
             try { s.imgui->end_frame(VK_NULL_HANDLE); } catch (...) {}
         }
         mark_overlay_failed(s.dd, "exception during overlay frame build");
-        return nullptr;
+        return RecordResult::Failed;
+    }
+
+    // Empty frame (not in voice, no toasts): discard it and skip the render pass +
+    // submit entirely. The present then goes down UNTOUCHED (original wait semaphores),
+    // so an idle overlay adds zero GPU work and zero present-time sync to the game.
+    if (!s.imgui->frame_has_content()) {
+        try { s.imgui->end_frame(VK_NULL_HANDLE); } catch (...) {}
+        return RecordResult::Skipped;
+    }
+
+    // Wait on this image's fence ONLY if a prior submit is actually in flight on it
+    // (the command buffer below must not be re-recorded while the GPU still reads it).
+    // If it isn't (first use, or a previous frame failed before/while submitting),
+    // the command buffer is not in use and the fence may be unsignaled — waiting on
+    // it would hang. The fence is reset + signalled only by the present hook's submit.
+    if (img.fence_in_flight &&
+        d.WaitForFences(dev, 1, &img.fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
+        try { s.imgui->end_frame(VK_NULL_HANDLE); } catch (...) {}  // discard frame
+        return RecordResult::Failed;
     }
 
     // Begin the render pass on this image's framebuffer (full extent), record the
@@ -421,10 +443,8 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     if (d.BeginCommandBuffer(img.cmd, &bi) != VK_SUCCESS) {
-        if (draw_imgui) {
-            try { s.imgui->end_frame(VK_NULL_HANDLE); } catch (...) {}  // discard frame
-        }
-        return nullptr;
+        try { s.imgui->end_frame(VK_NULL_HANDLE); } catch (...) {}  // discard frame
+        return RecordResult::Failed;
     }
 
     VkRenderPassBeginInfo rpbi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -439,20 +459,19 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
     // pass (replaces the Task-14 clear-rect placeholder). Wrapped: a throw here would
     // leave a half-recorded command buffer — we still close the render pass + buffer
     // and trip the latch so we never submit a malformed buffer twice.
-    if (draw_imgui) {
-        try {
-            s.imgui->end_frame(img.cmd);
-        } catch (...) {
-            d.CmdEndRenderPass(img.cmd);
-            d.EndCommandBuffer(img.cmd);
-            mark_overlay_failed(s.dd, "exception recording ImGui draw data");
-            return nullptr;
-        }
+    try {
+        s.imgui->end_frame(img.cmd);
+    } catch (...) {
+        d.CmdEndRenderPass(img.cmd);
+        d.EndCommandBuffer(img.cmd);
+        mark_overlay_failed(s.dd, "exception recording ImGui draw data");
+        return RecordResult::Failed;
     }
 
     d.CmdEndRenderPass(img.cmd);
-    if (d.EndCommandBuffer(img.cmd) != VK_SUCCESS) return nullptr;
-    return &img;
+    if (d.EndCommandBuffer(img.cmd) != VK_SUCCESS) return RecordResult::Failed;
+    *out = &img;
+    return RecordResult::Drawn;
 }
 
 }  // namespace
@@ -611,6 +630,19 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue,
         return forward();
     }
 
+    // QUEUE-FAMILY GUARD: only draw when the present queue is on the SAME family our
+    // command pool was created for. Our overlay command buffers are graphics render
+    // passes; submitting one to a queue of any other family is invalid Vulkan. This is
+    // not hypothetical: gamescope — itself a Vulkan app this GLOBAL layer loads into —
+    // creates BOTH a graphics and a compute-only queue and composites/presents on the
+    // COMPUTE-only one; a render pass submitted there intermittently corrupts/hangs the
+    // GPU (device lost takes down gamescope and every game inside it). Unknown queues
+    // (not enumerable at CreateDevice) forward too — safe-by-construction.
+    if (!dd->has_graphics_queue_family ||
+        queue_family_for(dd, queue) != dd->graphics_queue_family) {
+        return forward();
+    }
+
     // ENTRYPOINT CATCH-ALL (Task 18): a C++ exception unwinding through the C app/loader
     // is UB. Wrap the entire overlay block (record + submit) so any exception that
     // escapes record_one's inner guards (or std::vector/lock_guard allocation) trips the
@@ -623,25 +655,32 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue,
 
         std::lock_guard<std::mutex> g(g_sc_lock);
 
-    // Phase 1: record the overlay render pass into every tracked swapchain's current
-    // image. No submit yet, so the app's wait semaphores are still untouched — if any
-    // recording fails we can cleanly fall back to the real present.
+    // Phase 1: build this frame's overlay and record its render pass into every
+    // tracked swapchain's current image. No submit yet, so the app's wait semaphores
+    // are still untouched — if any recording fails, or NOTHING was drawn (host-
+    // disabled process, not in voice, renderer unavailable), we cleanly fall back to
+    // the real present: the app's frame goes down completely untouched, with zero
+    // overlay GPU work.
     std::vector<ImageState*> recorded;
     recorded.reserve(n);
-    bool all_recorded = true;
+    bool failed = false;
     for (uint32_t i = 0; i < n; ++i) {
         auto it = g_swapchains.find(pPresentInfo->pSwapchains[i]);
-        ImageState* img = (it != g_swapchains.end())
-                              ? record_one(it->second, pPresentInfo->pImageIndices[i])
-                              : nullptr;
-        if (!img) { all_recorded = false; break; }
-        recorded.push_back(img);
+        if (it == g_swapchains.end()) { failed = true; break; }  // untracked -> forward
+        ImageState* img = nullptr;
+        const RecordResult r = record_one(it->second, pPresentInfo->pImageIndices[i], &img);
+        if (r == RecordResult::Failed) { failed = true; break; }
+        if (r == RecordResult::Drawn) recorded.push_back(img);
+        // Skipped: nothing recorded for this swapchain; ordering for its image is
+        // still guaranteed — either the present keeps the app's original wait
+        // semaphores (nothing drawn at all), or submit[0] below consumes them and the
+        // present waits our overlay-done semaphores, which chain after them.
     }
-    if (!all_recorded) return forward();
+    if (failed || recorded.empty()) return forward();
 
-    // Phase 2: submit one overlay command buffer per swapchain, chained so the app's
-    // render-finished semaphores are waited exactly once (a binary semaphore can be
-    // waited at most once) and every overlay submit transitively executes after the
+    // Phase 2: submit one overlay command buffer per DRAWN swapchain, chained so the
+    // app's render-finished semaphores are waited exactly once (a binary semaphore can
+    // be waited at most once) and every overlay submit transitively executes after the
     // app's rendering. Submit[0] waits the app semaphores; submit[i>0] waits the prior
     // overlay-done. Each submit signals its own overlay-done and is fenced with its
     // image fence (so re-recording that image next time is safe).
@@ -649,10 +688,10 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue,
                                                  VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
     const VkPipelineStageFlags chain_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     std::vector<VkSemaphore> overlay_sems;
-    overlay_sems.reserve(n);
+    overlay_sems.reserve(recorded.size());
     VkSemaphore prev_done = VK_NULL_HANDLE;
 
-    for (uint32_t i = 0; i < n; ++i) {
+    for (uint32_t i = 0; i < recorded.size(); ++i) {
         ImageState* img = recorded[i];
         VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
         if (i == 0) {
