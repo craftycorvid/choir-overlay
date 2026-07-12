@@ -44,8 +44,6 @@ namespace {
 choir::RpcConfig make_rpc_config(const choir::Config& cfg) {
     choir::RpcConfig rc;
     rc.client_id = cfg.client_id;
-    rc.client_secret = cfg.client_secret;
-    rc.auth_mode = cfg.auth_mode;
     // scopes left at RpcConfig defaults.
     return rc;
 }
@@ -144,13 +142,6 @@ int main(int argc, char** argv) {
                     state.set_config(newcfg.appearance);  // bumps revision + broadcasts
                     *denylist = choir::Denylist(newcfg.denylist);
                 });
-
-            // "Authorize with Discord" -> kick the RPC AUTHORIZE flow.
-            QObject::connect(settings.get(), &choir::SettingsWindow::authorize_requested,
-                             [&rpc]() {
-                                 rpc.stop();
-                                 rpc.start();
-                             });
         }
         settings->show();
         settings->raise();

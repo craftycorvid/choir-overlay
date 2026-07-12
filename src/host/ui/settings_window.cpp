@@ -8,7 +8,6 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSlider>
@@ -95,31 +94,6 @@ void SettingsWindow::build_ui() {
     dl_layout->addWidget(denylist_);
     root->addWidget(dl_box);
 
-    // --- Auth ---
-    auto* auth = new QGroupBox(QStringLiteral("Discord authentication"), this);
-    auto* auf = new QFormLayout(auth);
-
-    auth_mode_ = new QComboBox(auth);
-    auth_mode_->addItem(QStringLiteral("Streamkit (zero setup)"));
-    auth_mode_->addItem(QStringLiteral("Own app"));
-    auf->addRow(QStringLiteral("Mode"), auth_mode_);
-
-    client_id_ = new QLineEdit(auth);
-    auf->addRow(QStringLiteral("Client ID"), client_id_);
-
-    client_secret_ = new QLineEdit(auth);
-    client_secret_->setEchoMode(QLineEdit::Password);
-    auf->addRow(QStringLiteral("Client secret"), client_secret_);
-
-    auto* authorize = new QPushButton(QStringLiteral("Authorize with Discord"), auth);
-    auf->addRow(QString(), authorize);
-    connect(authorize, &QPushButton::clicked, this, &SettingsWindow::authorize_requested);
-
-    root->addWidget(auth);
-    // Hidden: we authorize once and reuse the cached token, so the section isn't needed
-    // in the UI. Kept built + wired so it can be re-shown by deleting this line.
-    auth->setVisible(false);
-
     // --- Buttons ---
     auto* buttons = new QHBoxLayout();
     buttons->addStretch();
@@ -141,10 +115,6 @@ void SettingsWindow::load_into_widgets() {
     QStringList lines;
     for (const auto& pat : cfg_.denylist) lines << QString::fromStdString(pat);
     denylist_->setPlainText(lines.join(QChar('\n')));
-
-    auth_mode_->setCurrentIndex(cfg_.auth_mode == AuthMode::OwnApp ? 1 : 0);
-    client_id_->setText(QString::fromStdString(cfg_.client_id));
-    client_secret_->setText(QString::fromStdString(cfg_.client_secret));
 }
 
 Config SettingsWindow::gather_from_widgets() const {
@@ -164,10 +134,6 @@ Config SettingsWindow::gather_from_widgets() const {
         const QString trimmed = line.trimmed();
         if (!trimmed.isEmpty()) c.denylist.push_back(trimmed.toStdString());
     }
-
-    c.auth_mode = auth_mode_->currentIndex() == 1 ? AuthMode::OwnApp : AuthMode::Streamkit;
-    c.client_id = client_id_->text().trimmed().toStdString();
-    c.client_secret = client_secret_->text().toStdString();
 
     return c;
 }

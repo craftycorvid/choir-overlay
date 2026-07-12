@@ -31,10 +31,6 @@ public:
     QtHttpPost();
     ~QtHttpPost() override;
 
-    HttpResponse post(const std::string& url,
-                      const std::vector<std::pair<std::string, std::string>>& form,
-                      const std::vector<std::pair<std::string, std::string>>& headers) override;
-
     HttpResponse post_json(const std::string& url, const std::string& json_body,
                            const std::vector<std::pair<std::string, std::string>>& headers) override;
 

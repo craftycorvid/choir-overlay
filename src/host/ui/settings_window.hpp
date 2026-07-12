@@ -6,8 +6,6 @@
 //   - appearance: anchor combo, scale slider, HDR nits spinbox, show-all-members
 //     checkbox, toast anchor + duration
 //   - denylist editor (one glob per line)
-//   - auth: built but hidden (we authorize once and reuse the cached token); the
-//     "Authorize with Discord" button still emits authorize_requested() if re-shown
 //
 // Saving persists to config_path() and emits config_changed(Config) so main()
 // can push the new appearance into OverlayState and rebuild the Denylist.
@@ -23,7 +21,6 @@ class QComboBox;
 class QSlider;
 class QCheckBox;
 class QSpinBox;
-class QLineEdit;
 class QPlainTextEdit;
 QT_END_NAMESPACE
 
@@ -40,9 +37,6 @@ public:
 signals:
     // Emitted after Save: the new config has been written to config_path().
     void config_changed(const choir::Config& cfg);
-
-    // Emitted by the "Authorize with Discord" button.
-    void authorize_requested();
 
 private slots:
     void on_save_clicked();
@@ -62,10 +56,6 @@ private:
     QSpinBox* toast_duration_ = nullptr;
 
     QPlainTextEdit* denylist_ = nullptr;
-
-    QComboBox* auth_mode_ = nullptr;
-    QLineEdit* client_id_ = nullptr;
-    QLineEdit* client_secret_ = nullptr;
 };
 
 }  // namespace choir

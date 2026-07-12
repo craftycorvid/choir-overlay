@@ -170,8 +170,7 @@ void RpcClient::handle_authorize_response(const json& frame) {
         return;
     }
 
-    TokenResult tok =
-        exchange_code(http_, cfg_.auth_mode, code, cfg_.client_id, cfg_.client_secret);
+    TokenResult tok = exchange_code(http_, code);
     if (!tok.ok) {
         std::fprintf(stderr, "[choir] token exchange failed: %s; reconnecting\n",
                      tok.error.c_str());

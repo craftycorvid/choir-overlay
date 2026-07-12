@@ -35,9 +35,7 @@ namespace choir {
 enum class ConnectionState { Disconnected, Connecting, Authorizing, Ready, InChannel };
 
 struct RpcConfig {
-    std::string client_id;       // e.g. Streamkit "207646673902501888"
-    std::string client_secret;   // empty in Streamkit mode
-    AuthMode auth_mode = AuthMode::Streamkit;
+    std::string client_id;       // Streamkit app id "207646673902501888"
     std::vector<std::string> scopes = {"rpc", "rpc.notifications.read", "messages.read"};
     int64_t reconnect_delay_ms = 3000;
 };

@@ -70,26 +70,6 @@ HttpResponse run_post(QNetworkAccessManager* nam, QNetworkRequest& req,
 QtHttpPost::QtHttpPost() : nam_(new QNetworkAccessManager()) {}
 QtHttpPost::~QtHttpPost() { delete nam_; }
 
-HttpResponse QtHttpPost::post(
-    const std::string& url,
-    const std::vector<std::pair<std::string, std::string>>& form,
-    const std::vector<std::pair<std::string, std::string>>& headers) {
-    // Build the application/x-www-form-urlencoded body using the same encoder
-    // the OAuth layer expects (choir::url_encode).
-    std::string body;
-    for (size_t i = 0; i < form.size(); ++i) {
-        if (i) body += '&';
-        body += url_encode(form[i].first);
-        body += '=';
-        body += url_encode(form[i].second);
-    }
-
-    QNetworkRequest req((QUrl(QString::fromStdString(url))));
-    req.setHeader(QNetworkRequest::ContentTypeHeader,
-                  QStringLiteral("application/x-www-form-urlencoded"));
-    return run_post(nam_, req, headers, body, timeout_ms_);
-}
-
 HttpResponse QtHttpPost::post_json(
     const std::string& url, const std::string& json_body,
     const std::vector<std::pair<std::string, std::string>>& headers) {

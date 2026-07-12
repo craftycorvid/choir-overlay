@@ -16,18 +16,15 @@
 #include <string>
 #include <vector>
 
-#include "discord/oauth.hpp"  // AuthMode
-#include "ipc/state.hpp"      // AppearanceConfig
+#include "ipc/state.hpp"  // AppearanceConfig
 
 namespace choir {
 
 struct Config {
     AppearanceConfig appearance;  // overlay look (anchor/scale/hdr_nits/...)
 
-    // --- auth ---
-    AuthMode auth_mode = AuthMode::Streamkit;       // "streamkit" / "own-app"
-    std::string client_id = "207646673902501888";   // Streamkit default app id
-    std::string client_secret;                       // empty in streamkit mode
+    // --- auth (Streamkit) ---
+    std::string client_id = "207646673902501888";   // Streamkit app id
     std::string access_token;                         // cached OAuth token
     std::string refresh_token;
 
