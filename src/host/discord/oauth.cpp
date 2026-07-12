@@ -2,7 +2,6 @@
 
 #include <nlohmann/json.hpp>
 
-#include <cctype>
 #include <string>
 
 namespace choir {
@@ -27,52 +26,16 @@ std::string snippet(const std::string& body, size_t max = 200) {
     return body.substr(0, max) + "...";
 }
 
-// The Content-Type header common to both modes.
-std::vector<std::pair<std::string, std::string>> form_headers() {
-    return {{"Content-Type", "application/x-www-form-urlencoded"}};
-}
-
 }  // namespace
 
-std::string url_encode(const std::string& value) {
-    static const char* hex = "0123456789ABCDEF";
-    std::string out;
-    out.reserve(value.size() * 3);
-    for (unsigned char c : value) {
-        // RFC 3986 unreserved characters pass through untouched.
-        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-            out.push_back(static_cast<char>(c));
-        } else {
-            out.push_back('%');
-            out.push_back(hex[(c >> 4) & 0xF]);
-            out.push_back(hex[c & 0xF]);
-        }
-    }
-    return out;
-}
-
-TokenResult exchange_code(HttpPost& http, AuthMode mode, const std::string& code,
-                          const std::string& client_id, const std::string& client_secret) {
+TokenResult exchange_code(HttpPost& http, const std::string& code) {
     TokenResult result;
 
-    HttpResponse resp;
-    if (mode == AuthMode::Streamkit) {
-        // Streamkit's Cloudflare worker holds the client secret and expects a JSON
-        // body {"code": ...} (a form body makes it throw -> HTTP 500 "error code:
-        // 1101"). We only send the code.
-        const std::string json_body = json{{"code", code}}.dump();
-        resp = http.post_json(kStreamkitTokenUrl, json_body, /*headers=*/{});
-    } else {
-        // Standard OAuth2 authorization_code grant with our own credentials,
-        // application/x-www-form-urlencoded per the Discord token endpoint spec.
-        const std::vector<std::pair<std::string, std::string>> form = {
-            {"grant_type", "authorization_code"},
-            {"code", code},
-            {"client_id", client_id},
-            {"client_secret", client_secret},
-        };
-        resp = http.post(kDiscordTokenUrl, form, form_headers());
-    }
+    // Streamkit's Cloudflare worker holds the client secret and expects a JSON
+    // body {"code": ...} (a form body makes it throw -> HTTP 500 "error code:
+    // 1101"). We only send the code.
+    const std::string json_body = json{{"code", code}}.dump();
+    HttpResponse resp = http.post_json(kStreamkitTokenUrl, json_body, /*headers=*/{});
 
     if (resp.status != 200) {
         result.error = "token exchange failed: HTTP " + std::to_string(resp.status) +

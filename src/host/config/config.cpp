@@ -18,15 +18,6 @@ namespace {
 
 using nlohmann::json;
 
-const char* auth_mode_to_str(AuthMode m) {
-    return (m == AuthMode::OwnApp) ? "own-app" : "streamkit";
-}
-
-AuthMode auth_mode_from_str(const std::string& s) {
-    if (s == "own-app") return AuthMode::OwnApp;
-    return AuthMode::Streamkit;  // default on "streamkit" or anything unknown
-}
-
 // Read whole file into `out`. Returns false if it can't be opened/read.
 bool read_file(const std::string& path, std::string& out) {
     const int fd = ::open(path.c_str(), O_RDONLY);
@@ -88,14 +79,8 @@ Config Config::load(const std::string& path) {
         // keep default appearance
     }
 
-    if (j.contains("auth_mode") && j["auth_mode"].is_string()) {
-        c.auth_mode = auth_mode_from_str(j["auth_mode"].get<std::string>());
-    }
     if (j.contains("client_id") && j["client_id"].is_string()) {
         c.client_id = j["client_id"].get<std::string>();
-    }
-    if (j.contains("client_secret") && j["client_secret"].is_string()) {
-        c.client_secret = j["client_secret"].get<std::string>();
     }
     if (j.contains("access_token") && j["access_token"].is_string()) {
         c.access_token = j["access_token"].get<std::string>();
@@ -124,9 +109,7 @@ Config Config::load(const std::string& path) {
 bool Config::save(const std::string& path) const {
     json j;
     j["appearance"] = appearance;
-    j["auth_mode"] = auth_mode_to_str(auth_mode);
     j["client_id"] = client_id;
-    j["client_secret"] = client_secret;
     j["access_token"] = access_token;
     j["refresh_token"] = refresh_token;
     j["denylist"] = denylist;

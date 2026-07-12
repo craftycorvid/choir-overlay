@@ -13,8 +13,7 @@
 //
 // If the spike fails (e.g. the placeholder kStreamkitTokenUrl in oauth.hpp is
 // wrong, or Streamkit needs different params/headers), that is exactly the
-// finding the gate exists to surface — correct kStreamkitTokenUrl (one constant)
-// or switch RpcConfig to AuthMode::OwnApp and re-run.
+// finding the gate exists to surface — correct kStreamkitTokenUrl and re-run.
 
 #include "discord/qt_http.hpp"
 #include "discord/rpc_client.hpp"
@@ -53,8 +52,7 @@ void print_banner() {
         "\n"
         "On success it prints the live voice roster + SPEAKING_START/STOP as people talk.\n"
         "If it never authorizes or errors at token exchange, the placeholder\n"
-        "kStreamkitTokenUrl in src/host/discord/oauth.hpp likely needs correcting,\n"
-        "or switch RpcConfig.auth_mode to OwnApp (register your own Discord app).\n"
+        "kStreamkitTokenUrl in src/host/discord/oauth.hpp likely needs correcting.\n"
         "\n"
         "Press Ctrl-C to quit.");
 }
@@ -108,9 +106,8 @@ int main(int argc, char** argv) {
     std::fflush(stdout);
 
     choir::QtHttpPost http;
-    choir::RpcConfig cfg;  // Streamkit defaults: client_id 207646673902501888, AuthMode::Streamkit
+    choir::RpcConfig cfg;  // Streamkit default: client_id 207646673902501888
     cfg.client_id = "207646673902501888";
-    cfg.auth_mode = choir::AuthMode::Streamkit;
 
     choir::RpcClient rpc(cfg, http);
 

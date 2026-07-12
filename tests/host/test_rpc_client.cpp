@@ -96,18 +96,8 @@ struct FakeHttp : HttpPost {
     std::atomic<int> call_count{0};
     std::string last_code;
 
-    HttpResponse post(const std::string&,
-                      const std::vector<std::pair<std::string, std::string>>& form,
-                      const std::vector<std::pair<std::string, std::string>>&) override {
-        ++call_count;
-        for (const auto& kv : form) {
-            if (kv.first == "code") last_code = kv.second;
-        }
-        return resp;
-    }
-
-    // Streamkit mode (the RpcConfig default) goes through post_json; pull the
-    // code out of the JSON body so last_code still reflects the exchanged code.
+    // Token exchange goes through post_json; pull the code out of the JSON body
+    // so last_code reflects the exchanged code.
     HttpResponse post_json(const std::string&, const std::string& json_body,
                            const std::vector<std::pair<std::string, std::string>>&) override {
         ++call_count;
@@ -247,7 +237,6 @@ void test_full_handshake_to_in_channel(int lfd) {
 
     RpcConfig cfg;
     cfg.client_id = "207646673902501888";
-    cfg.auth_mode = AuthMode::Streamkit;
     cfg.reconnect_delay_ms = 3000;
 
     int64_t fake_now = 0;
@@ -385,7 +374,6 @@ void test_already_in_channel_on_connect(int lfd) {
     FakeHttp http;
     RpcConfig cfg;
     cfg.client_id = "207646673902501888";
-    cfg.auth_mode = AuthMode::Streamkit;
 
     int64_t fake_now = 0;
     RpcClient client(cfg, http, [&] { return fake_now; });
