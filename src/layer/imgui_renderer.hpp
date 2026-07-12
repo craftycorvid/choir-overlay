@@ -77,6 +77,12 @@ public:
     void begin_frame(VkExtent2D extent, const Snapshot* snap, AvatarTextures& textures,
                      StateClient& client, int64_t now_ms);
 
+    // True when the frame built by begin_frame contains anything visible (a non-empty
+    // ImGui draw list). When false the caller can discard the frame — end_frame with
+    // VK_NULL_HANDLE — and skip the overlay render pass + submit entirely, so a
+    // process that is never in voice contributes ZERO GPU work to its presents.
+    bool frame_has_content();
+
     // Record the current ImGui draw data into `cmd`. MUST be called inside the active
     // render pass (between vkCmdBeginRenderPass / vkCmdEndRenderPass). The font atlas
     // (and any user textures) upload lazily on the first call, via the backend's own

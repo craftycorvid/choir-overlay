@@ -223,6 +223,15 @@ void ImguiRenderer::begin_frame(VkExtent2D extent, const Snapshot* snap,
     frame_started_ = true;
 }
 
+bool ImguiRenderer::frame_has_content() {
+    if (!init_done_ || !frame_started_) return false;
+    ImGui::SetCurrentContext(ctx_);
+    // Valid after ImGui::Render() (begin_frame ends with it). TotalVtxCount == 0 means
+    // draw_overlay drew nothing (not in voice, no toasts) — nothing to record.
+    const ImDrawData* draw_data = ImGui::GetDrawData();
+    return draw_data && draw_data->TotalVtxCount > 0;
+}
+
 void ImguiRenderer::end_frame(VkCommandBuffer cmd) {
     if (!init_done_ || !frame_started_) return;
     ImGui::SetCurrentContext(ctx_);

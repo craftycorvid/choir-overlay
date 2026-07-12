@@ -47,6 +47,22 @@ Vulkan layer feeds ImGui function pointers via its own dispatch, never the globa
 - **HDR is the common case here.** The overlay draws through a custom HDR fragment-shader pipeline
   (`swapchain_color.hpp` transfer model + `shaders/overlay_hdr.frag`, mode+nits as specialization
   constants). DXVK/VKD3D HDR swapchains are FP16 `PASS_THROUGH`/scRGB or HDR10 PQ.
+- **Gamescope rewrites the swapchain color space.** Its WSI layer (`VK_LAYER_FROG_gamescope_wsi`)
+  advertises HDR color spaces to the game but forces `imageColorSpace` to `SRGB_NONLINEAR` before
+  the create-info reaches us (HDR moves over its private Wayland protocol). Under gamescope
+  (`GAMESCOPE_WAYLAND_DISPLAY`) infer the transfer from the FORMAT: FP16 → scRGB; A2*10 → PQ only
+  when `DXVK_HDR` is also set (10-bit sRGB is a legit SDR config). See `swapchain_color.hpp`.
+- **Never submit our graphics command buffers to a non-graphics present queue.** Gamescope is
+  itself a Vulkan app this GLOBAL layer loads into, and it composites/presents on a
+  **compute-only** queue (while also creating a graphics queue, so state building succeeds). A
+  render pass submitted there intermittently hangs the GPU → device lost takes down gamescope AND
+  every game inside it. The present hook checks the present queue's family (all queues captured at
+  `vkCreateDevice`) against our graphics family and forwards otherwise.
+- **Submit nothing when there is nothing to draw.** Host-disabled (denylisted) processes, games
+  never/not in voice, and empty frames are pure forwards — no fence wait, no empty LOAD/STORE
+  pass, untouched present wait-semaphores (`RecordResult::Skipped`). Gamescope's present_wait-based
+  frame pacing must not carry overlay submits; this also keeps the overlay at zero GPU cost
+  outside voice.
 - Golden tests can't exercise true HDR (no HDR headless surface) and run on the **real GPU**
   — make GPU-corrupting fixes **safe-by-construction** so a regression fails the test, not the GPU.
 

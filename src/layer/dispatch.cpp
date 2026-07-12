@@ -128,6 +128,13 @@ DeviceData* device_data(void* dispatchable_handle) {
     return it == g_devices.end() ? nullptr : &it->second;
 }
 
+uint32_t queue_family_for(const DeviceData* dd, VkQueue queue) {
+    if (!dd) return UINT32_MAX;
+    for (const auto& [q, family] : dd->queue_families)
+        if (q == queue) return family;
+    return UINT32_MAX;
+}
+
 void mark_overlay_failed(DeviceData* dd, const char* reason) {
     if (!dd) return;
     // exchange returns the PRIOR value: log only on the first 0->1 transition so a
@@ -266,6 +273,24 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physicalDevice,
     // (we picked it from pQueueCreateInfos), so queue index 0 is valid.
     if (data.has_graphics_queue_family && data.disp.GetDeviceQueue) {
         data.disp.GetDeviceQueue(*pDevice, data.graphics_queue_family, 0, &data.graphics_queue);
+    }
+
+    // Capture EVERY queue the app created so the present hook can tell which family a
+    // present arrives on (see DeviceData::queue_families — gamescope presents on a
+    // compute-only queue, where our graphics command buffers must never be submitted).
+    // vkGetDeviceQueue is only valid for queues created with flags == 0; queues of
+    // flagged (protected-capable) families stay unknown and the present hook forwards.
+    if (data.disp.GetDeviceQueue) {
+        for (uint32_t i = 0; i < pCreateInfo->queueCreateInfoCount; ++i) {
+            const VkDeviceQueueCreateInfo& qci = pCreateInfo->pQueueCreateInfos[i];
+            if (qci.flags != 0) continue;
+            for (uint32_t qi = 0; qi < qci.queueCount; ++qi) {
+                VkQueue q = VK_NULL_HANDLE;
+                data.disp.GetDeviceQueue(*pDevice, qci.queueFamilyIndex, qi, &q);
+                if (q != VK_NULL_HANDLE)
+                    data.queue_families.emplace_back(q, qci.queueFamilyIndex);
+            }
+        }
     }
 
     return VK_SUCCESS;

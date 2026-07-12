@@ -13,6 +13,26 @@
 //   anything else (incl. PASS_THROUGH) NONE / SRGB        none, unless the FORMAT is _SRGB
 //                                                          (hardware re-encodes) -> sRGB->linear
 //
+// GAMESCOPE: inside gamescope the color space CANNOT be trusted. Gamescope's implicit
+// WSI layer (VK_LAYER_FROG_gamescope_wsi) advertises the HDR color spaces to the app,
+// then REWRITES imageColorSpace to SRGB_NONLINEAR before the create-info travels
+// further down the chain (HDR colorimetry is negotiated over its private Wayland
+// protocol instead, which layers below it — us — never see). So an HDR swapchain
+// reaches this layer as {RGBA16F or A2*10, SRGB_NONLINEAR} and the table above picks
+// None -> the overlay is written as raw sRGB values into a buffer gamescope interprets
+// as scRGB/PQ (washed out / oversaturated). When running under gamescope
+// (GAMESCOPE_WAYLAND_DISPLAY set) we therefore infer the transfer from the FORMAT:
+//
+//   RGBA16F/RGB16F + SRGB_NONLINEAR                  ScRgb  (gamescope only advertises
+//                                                           FP16 for scRGB HDR)
+//   A2B10G10R10/A2R10G10B10 + SRGB_NONLINEAR
+//                            + DXVK_HDR set          Pq     (10-bit + sRGB is also a
+//                                                           legit SDR config, so gate on
+//                                                           DXVK_HDR — set whenever HDR
+//                                                           gaming under gamescope is
+//                                                           actually on; gamescope's WSI
+//                                                           layer keys off it too)
+//
 // The transfer math (srgb_to_linear / bt709_to_bt2020 / linear_to_pq / linear_to_hlg) is
 // ported verbatim from MangoHud's src/hud_elements.cpp.
 #pragma once
@@ -20,6 +40,8 @@
 #include <vulkan/vulkan.h>
 
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 
 namespace choir {
 
@@ -53,18 +75,70 @@ inline bool is_hdr_float_format(VkFormat f) {
     }
 }
 
+// True for the 10-bit packed UNORM formats HDR10 (PQ) swapchains actually use —
+// what DXVK/VKD3D present for HDR10 and what gamescope's WSI layer advertises with
+// HDR10_ST2084.
+inline bool is_hdr10_unorm_format(VkFormat f) {
+    switch (f) {
+        case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+        case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// True when this process runs inside gamescope (gamescope exports the name of its
+// nested Wayland display to its children; its WSI layer keys off the same variable).
+inline bool running_under_gamescope() {
+    static const bool v = [] {
+        const char* e = std::getenv("GAMESCOPE_WAYLAND_DISPLAY");
+        return e && *e;
+    }();
+    return v;
+}
+
+// True when HDR is enabled for this game via DXVK_HDR (set by Steam/gamescope for HDR
+// sessions; gamescope's WSI layer reads it to decide whether to advertise HDR formats).
+inline bool dxvk_hdr_enabled() {
+    static const bool v = [] {
+        const char* e = std::getenv("DXVK_HDR");
+        return e && *e && std::strcmp(e, "0") != 0 && std::strcmp(e, "false") != 0;
+    }();
+    return v;
+}
+
 // Pick the transfer function for a swapchain (MangoHud convert_colors_vk order: color
-// space first, then the _SRGB-format fallback).
-inline TransferFunction transfer_function_for(VkFormat fmt, VkColorSpaceKHR cs) {
+// space first, then the _SRGB-format fallback). `under_gamescope` / `dxvk_hdr` enable
+// the gamescope format-based inference documented at the top of this header (passed
+// explicitly so the logic stays unit-testable without touching the environment).
+inline TransferFunction transfer_function_for(VkFormat fmt, VkColorSpaceKHR cs,
+                                              bool under_gamescope, bool dxvk_hdr) {
     switch (cs) {
         case VK_COLOR_SPACE_HDR10_ST2084_EXT:         return TransferFunction::Pq;
         case VK_COLOR_SPACE_HDR10_HLG_EXT:            return TransferFunction::Hlg;
         case VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT: return TransferFunction::ScRgb;
         case VK_COLOR_SPACE_PASS_THROUGH_EXT:
             return is_hdr_float_format(fmt) ? TransferFunction::ScRgb : TransferFunction::None;
+        case VK_COLOR_SPACE_SRGB_NONLINEAR_KHR:
+            // Gamescope's WSI layer rewrote the real (HDR) color space to sRGB before
+            // we saw it — recover it from the format (see header comment). FP16 is
+            // unambiguous (only advertised for scRGB); 10-bit is PQ only when HDR
+            // gaming is actually enabled (DXVK_HDR), since 10-bit sRGB is a valid SDR
+            // swapchain too.
+            if (under_gamescope) {
+                if (is_hdr_float_format(fmt)) return TransferFunction::ScRgb;
+                if (dxvk_hdr && is_hdr10_unorm_format(fmt)) return TransferFunction::Pq;
+            }
+            break;
         default: break;
     }
     return is_srgb_format(fmt) ? TransferFunction::Srgb : TransferFunction::None;
+}
+
+// Environment-driven convenience overload used by the layer at swapchain creation.
+inline TransferFunction transfer_function_for(VkFormat fmt, VkColorSpaceKHR cs) {
+    return transfer_function_for(fmt, cs, running_under_gamescope(), dxvk_hdr_enabled());
 }
 
 // --- MangoHud color math (src/hud_elements.cpp), ported verbatim ----------------------
