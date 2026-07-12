@@ -386,15 +386,12 @@ ImageState* record_one(SwapchainState& s, uint32_t image_index) {
     // inconsistent) — the latch guarantees that.
     bool draw_imgui = renderer_ready && !host_disabled && s.avatars;
     try {
-        // Eagerly drain any pending avatar-load requests and upload them on THIS
-        // (render) thread — the only thread that may call Vulkan. Best-effort warm-up;
-        // draw_overlay resolves each participant's texture by hash on demand. Cached by
-        // hash, so repeats are cheap. Skip when host-disabled.
+        // Avatar textures load on demand in draw_overlay (resolve_icon pulls the
+        // retained AvatarReq by hash and uploads on THIS render thread — the only
+        // thread that may call Vulkan — caching by hash so repeats are cheap).
         if (renderer_ready && s.avatars && !host_disabled) {
-            for (const AvatarReq& req : client.drain_avatar_requests())
-                s.avatars->get_or_load(req);
             if (const char* dbg = ::getenv("CHOIR_DEBUG_AVATARS"); dbg && *dbg)
-                std::fprintf(stderr, "[choir] avatar textures loaded: %zu\n",
+                std::fprintf(stderr, "[choir] avatar textures cached: %zu\n",
                              s.avatars->size());
         }
 

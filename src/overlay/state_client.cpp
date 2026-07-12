@@ -87,13 +87,6 @@ StateClient::~StateClient() {
     if (wake_w_ >= 0) ::close(wake_w_);
 }
 
-std::vector<AvatarReq> StateClient::drain_avatar_requests() {
-    std::lock_guard<std::mutex> g(avatar_mutex_);
-    std::vector<AvatarReq> out;
-    out.swap(avatar_queue_);
-    return out;
-}
-
 std::optional<AvatarReq> StateClient::avatar_for(const std::string& hash) const {
     std::lock_guard<std::mutex> g(avatar_mutex_);
     auto it = avatars_.find(hash);
@@ -111,11 +104,6 @@ void StateClient::enqueue_avatar(AvatarReq req) {
     // second swapchain can resolve it on demand via avatar_for() (the host won't replay
     // AvatarReady over the persistent connection). Latest announcement for a hash wins.
     avatars_[req.hash] = req;
-    // De-dup the eager-load queue by hash: a repeated AvatarReady for the same hash need
-    // not re-enqueue (the render thread caches by hash anyway, but this keeps it small).
-    for (const auto& r : avatar_queue_)
-        if (r.hash == req.hash) return;
-    avatar_queue_.push_back(std::move(req));
 }
 
 // Sleep for `ms`, but wake early (and return false) if a shutdown was requested.
