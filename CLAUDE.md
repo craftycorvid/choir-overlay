@@ -3,10 +3,14 @@
 A Wayland-only, Vulkan-only Discord voice overlay for Linux: draws an ImGui overlay on top
 of Vulkan games (incl. DXVK/VKD3D), never on the desktop. Not affiliated with Discord.
 
+VERIFY_LEVEL=tdd
+<!-- powers verify-gate: source changes without test changes are blocked. -->
+
 ## Build & test
 
 - Build: `meson compile -C build` (first time: `meson setup build . --buildtype=release`)
 - Test: `meson test -C build` (22 tests; the golden layer tests render on the real GPU)
+- Verify (what the powers gate runs): `scripts/verify.sh`
 - Per-user install (layer + host → ~/.local): `bash packaging/install-user.sh`
   - This is a Vulkan **layer** change → **relaunch the game** to pick it up.
 - Pacman package: `cd packaging && makepkg -si` (uses `-Dbuild_tests=false`)
