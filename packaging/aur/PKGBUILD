@@ -2,7 +2,7 @@
 #
 # AUR VCS package: builds Choir from the latest commit on the public repo's main branch.
 pkgname=choir-overlay-git
-pkgver=r65.g25f404f
+pkgver=r67.gd92a041
 pkgrel=1
 pkgdesc="Wayland Discord voice overlay for Vulkan + OpenGL games (not affiliated with Discord Inc.)"
 arch=('x86_64')
