@@ -39,6 +39,14 @@ test('avatar_file',
   ),
 )
 
+test('emoji',
+  executable('t_emoji',
+    'ipc/test_emoji.cpp',
+    link_with: libchoir_ipc,
+    include_directories: ipc_inc,
+  ),
+)
+
 test('ipc_transport',
   executable('t_ipc_transport',
     'host/test_ipc_transport.cpp',

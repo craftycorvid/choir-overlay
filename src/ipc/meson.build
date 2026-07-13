@@ -8,6 +8,7 @@ ipc_sources = files(
   'protocol.cpp',
   'framing.cpp',
   'avatar_file.cpp',
+  'emoji.cpp',
 )
 
 libchoir_ipc = static_library('choir_ipc',
