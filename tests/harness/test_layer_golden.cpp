@@ -94,6 +94,12 @@ bool is_toast_bg(RGB p) {
     return p.r > 20 && p.r < 60 && p.g > 22 && p.g < 65 && p.b > 28 && p.b < 95;
 }
 
+// fake_host's emoji images in the --toast body: yellow (224,224,64) for the custom
+// emoji, magenta (224,64,224) for the unicode one. The B ceiling (yellow) / G ceiling
+// (magenta) exclude white title text and its anti-aliased blends over the dark card.
+bool is_emoji_yellow(RGB p) { return p.r > 150 && p.g > 150 && p.b < 120; }
+bool is_emoji_magenta(RGB p) { return p.r > 150 && p.b > 150 && p.g < 120; }
+
 // Does any pixel in [x0,x1)x[y0,y1) satisfy `pred`?
 template <typename Pred>
 bool any_pixel(const std::vector<uint8_t>& rgb, uint32_t w, uint32_t h, uint32_t x0,
@@ -186,6 +192,10 @@ int main(int argc, char** argv) {
 
     const std::vector<std::string> layer_env = {
         "VK_LAYER_PATH=" + layer_dir,
+        // Replace the implicit-layer search paths too: a SYSTEM-WIDE install
+        // (/usr/share/vulkan, pacman package) would otherwise shadow the build layer
+        // by name — XDG_DATA_HOME isolation only hides a per-user install.
+        "VK_IMPLICIT_LAYER_PATH=" + layer_dir,
         "VK_INSTANCE_LAYERS=VK_LAYER_choir_overlay_x86_64",
         "VK_LOADER_LAYERS_ENABLE=VK_LAYER_choir_overlay_x86_64",
         "DISABLE_CHOIR_OVERLAY=",  // ensure not disabled by a stale env flag
@@ -423,7 +433,14 @@ int main(int argc, char** argv) {
                       "toast: no card background drawn in the bottom-left");
                 check(any_pixel(trgb, tw, th, tx0, ty0, tx1, ty1, is_red),
                       "toast: no avatar icon drawn on the card");
-                std::printf("golden: toast — card + circular icon drawn (Discord-style)\n");
+                // The body leads with <:pog:9001> (yellow) + 😄 (magenta): both must
+                // render as inline emoji images, end-to-end through the same
+                // AvatarReady -> texture path as avatars.
+                check(any_pixel(trgb, tw, th, tx0, ty0, tx1, ty1, is_emoji_yellow),
+                      "toast: no custom-emoji image drawn in the body");
+                check(any_pixel(trgb, tw, th, tx0, ty0, tx1, ty1, is_emoji_magenta),
+                      "toast: no unicode-emoji image drawn in the body");
+                std::printf("golden: toast — card + icon + inline emoji drawn\n");
             }
             kill_and_reap(host3);
         }
@@ -472,7 +489,8 @@ int main(int argc, char** argv) {
     if (rc == 0)
         std::puts("golden: PASS — voice panel + avatars + speaking ring + mute glyph drawn; "
                   "avatars survive recreate; sRGB colors accurate; placeholder silhouette "
-                  "for avatar-less users; notification toast with icon; overlay works on a "
-                  "no-color-attachment swapchain; nothing drawn without a host");
+                  "for avatar-less users; notification toast with icon + inline emoji; "
+                  "overlay works on a no-color-attachment swapchain; nothing drawn without "
+                  "a host");
     return rc;
 }

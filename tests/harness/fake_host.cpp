@@ -56,6 +56,11 @@ constexpr TestAvatar kAvatars[] = {
     {"avatarA", 0xE0, 0x40, 0x40},  // red
     {"avatarB", 0x40, 0xE0, 0x40},  // green
     {"avatarC", 0x40, 0x40, 0xE0},  // blue
+    // Emoji images for the --toast body, keyed exactly as the overlay's emoji
+    // parser derives them (the hardcoded "emoji.u.1f604" doubles as an
+    // end-to-end check of unicode key derivation against the 😄 in the body).
+    {"emoji.c.9001", 0xE0, 0xE0, 0x40},   // yellow (custom emoji <:pog:9001>)
+    {"emoji.u.1f604", 0xE0, 0x40, 0xE0},  // magenta (unicode emoji 😄)
 };
 
 // Runtime config (parsed from argv). The fault-injection knobs default off so the
@@ -129,7 +134,10 @@ choir::Snapshot make_snapshot(bool in_voice, uint64_t revision, bool all_speakin
         choir::Notification n;
         n.id = "n1";
         n.title = "Dave started a call";
-        n.body = "Are you free to play a few rounds tonight? Putting a group together for ranked";
+        // Leads with a custom + a unicode emoji (drawn as inline images from the
+        // kAvatars emoji entries); the rest stays long to exercise wrap + ellipsis.
+        n.body = "<:pog:9001> \xF0\x9F\x98\x84 Are you free to play a few rounds tonight? "
+                 "Putting a group together for ranked";
         n.icon_hash = "avatarA";  // reuse the red test avatar as the toast icon
         n.created_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                            std::chrono::system_clock::now().time_since_epoch())

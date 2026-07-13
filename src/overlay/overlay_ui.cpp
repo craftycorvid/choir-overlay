@@ -18,6 +18,7 @@
 
 #include "iavatar_textures.hpp"
 #include "fade.hpp"
+#include "ipc/emoji.hpp"
 #include "ipc/state.hpp"
 #include "state_client.hpp"
 
@@ -179,38 +180,122 @@ void draw_circle_icon(ImDrawList* dl, float x, float y, float d, ImTextureID tex
     }
 }
 
-// Word-wrap `text` (measured at font `size`) to `wrap_width`, clamped to `max_lines`. If
-// text remains after the last allowed line, that line is truncated to fit a trailing
-// "..." ellipsis. Returns the lines as owned strings (the last may end in "...").
-std::vector<std::string> wrap_text(const std::string& text, float size, float wrap_width,
-                                   int max_lines) {
-    std::vector<std::string> lines;
-    if (text.empty() || wrap_width <= 1.0f || max_lines <= 0) return lines;
+// One positioned piece of a laid-out text block: a text fragment drawn at `pos` (offset
+// from the block's top-left), or — when `tex` is valid — an inline emoji image drawn as
+// a font-size square box at `pos`.
+struct PlacedRun {
+    ImVec2 pos;
+    std::string text;
+    ImTextureID tex = ImTextureID_Invalid;
+};
+
+// Lay out `text` (UTF-8, may contain Discord emoji markup and unicode emoji) at font
+// `size` into at most `max_lines` lines of `wrap_width`, advancing `line_advance` per
+// line. Emoji whose textures resolve become size x size inline boxes; unresolved emoji
+// (image not fetched/arrived) lay out as their fallback text (":name:" / raw sequence),
+// so measurement and drawing always agree. If content remains past the last allowed
+// line, that line is truncated to fit a trailing "..." (same semantics as the old
+// wrap_text). Returns the number of lines used (0 for empty text).
+int layout_runs(const std::string& text, float size, float line_advance, float wrap_width,
+                int max_lines, IAvatarTextures& textures, StateClient& client,
+                std::vector<PlacedRun>& out) {
+    out.clear();
+    if (text.empty() || wrap_width <= 1.0f || max_lines <= 0) return 0;
     ImFont* font = ImGui::GetFont();
-    const char* p = text.c_str();
-    const char* end = p + text.size();
-    for (int i = 0; i < max_lines && p < end; ++i) {
-        const char* fit = font->CalcWordWrapPosition(size, p, end, wrap_width);
-        if (fit <= p) fit = p + 1;             // guarantee progress on a too-narrow column
-        if (fit >= end) {                       // remainder fits on this line
-            lines.emplace_back(p, end);
-            break;
+
+    // Resolve emoji textures up front; unresolved emoji coalesce into the neighboring
+    // text so their fallback participates in normal word wrapping.
+    struct Item {
+        std::string text;
+        ImTextureID tex = ImTextureID_Invalid;
+    };
+    std::vector<Item> items;
+    for (auto& r : emoji::split_runs(text)) {
+        const ImTextureID tex =
+            r.key.empty() ? ImTextureID_Invalid : resolve_icon(r.key, textures, client);
+        if (tex != ImTextureID_Invalid) {
+            items.push_back({std::string(), tex});
+        } else if (!items.empty() && items.back().tex == ImTextureID_Invalid) {
+            items.back().text += r.text;
+        } else {
+            items.push_back({std::move(r.text), ImTextureID_Invalid});
         }
-        if (i == max_lines - 1) {               // overflow on the last line: ellipsize
-            const float ell = font->CalcTextSizeA(size, FLT_MAX, 0.0f, "...").x;
-            const char* cut = font->CalcWordWrapPosition(size, p, end, wrap_width - ell);
-            if (cut <= p) cut = fit;            // ellipsis wider than the column: fall back
-            std::string line(p, cut);
-            while (!line.empty() && line.back() == ' ') line.pop_back();
-            line += "...";
-            lines.push_back(std::move(line));
-            break;
-        }
-        lines.emplace_back(p, fit);
-        p = fit;
-        while (p < end && *p == ' ') ++p;       // swallow the break's leading spaces
     }
-    return lines;
+
+    int line = 0;
+    float x = 0.0f;          // cursor on the current line
+    bool overflow = false;   // ran out of lines with content remaining
+    for (const Item& item : items) {
+        if (overflow) break;
+        if (item.tex != ImTextureID_Invalid) {
+            if (x + size > wrap_width && x > 0.0f) {  // box doesn't fit: wrap before it
+                if (line + 1 >= max_lines) { overflow = true; break; }
+                ++line; x = 0.0f;
+            }
+            out.push_back({ImVec2(x, line * line_advance), std::string(), item.tex});
+            x += size;
+            continue;
+        }
+        const char* p = item.text.c_str();
+        const char* end = p + item.text.size();
+        while (p < end) {
+            const char* fit = font->CalcWordWrapPosition(size, p, end, wrap_width - x);
+            if (fit <= p) {
+                if (x > 0.0f) {                 // nothing fits mid-line: wrap and retry
+                    if (line + 1 >= max_lines) { overflow = true; break; }
+                    ++line; x = 0.0f;
+                    while (p < end && *p == ' ') ++p;
+                    continue;
+                }
+                // Full line available and still nothing fits (too-narrow column):
+                // force progress by one whole UTF-8 codepoint, never mid-sequence.
+                fit = p + 1;
+                while (fit < end && (*fit & 0xC0) == 0x80) ++fit;
+            }
+            out.push_back(
+                {ImVec2(x, line * line_advance), std::string(p, fit), ImTextureID_Invalid});
+            x += font->CalcTextSizeA(size, FLT_MAX, 0.0f, p, fit).x;
+            p = fit;
+            if (p < end) {                      // more text: wrap to the next line
+                const char* q = p;
+                while (q < end && *q == ' ') ++q;
+                if (q >= end) break;            // only trailing spaces left
+                if (line + 1 >= max_lines) { overflow = true; break; }
+                ++line; x = 0.0f;
+                p = q;                          // swallow the break's leading spaces
+            }
+        }
+    }
+
+    // Overflow on the last line: shrink its tail until "..." fits, then append it.
+    if (overflow) {
+        const float ell = font->CalcTextSizeA(size, FLT_MAX, 0.0f, "...").x;
+        const float last_y = line * line_advance;
+        while (!out.empty() && out.back().pos.y >= last_y && x + ell > wrap_width) {
+            PlacedRun& last = out.back();
+            if (last.tex != ImTextureID_Invalid) {  // drop the emoji box
+                x = last.pos.x;
+                out.pop_back();
+                continue;
+            }
+            const char* p = last.text.c_str();
+            const char* pend = p + last.text.size();
+            const float avail = wrap_width - ell - last.pos.x;
+            const char* cut =
+                avail > 0.0f ? font->CalcWordWrapPosition(size, p, pend, avail) : p;
+            if (cut <= p) {                          // nothing of it fits: drop it
+                x = last.pos.x;
+                out.pop_back();
+                continue;
+            }
+            last.text.assign(p, cut);
+            while (!last.text.empty() && last.text.back() == ' ') last.text.pop_back();
+            x = last.pos.x + font->CalcTextSizeA(size, FLT_MAX, 0.0f, last.text.c_str()).x;
+            break;
+        }
+        out.push_back({ImVec2(x, last_y), "...", ImTextureID_Invalid});
+    }
+    return line + 1;
 }
 
 // --- Voice participant panel ---------------------------------------------------------
@@ -374,10 +459,12 @@ void draw_toasts(const Snapshot& snap, IAvatarTextures& textures, StateClient& c
 
         // Lay out the title (one line, ellipsized) and body (up to two lines) up front so
         // the card height fits the text — or the icon, whichever is taller.
-        const auto title_lines = wrap_text(n.title, title_sz, text_w, 1);
-        const auto body_lines = wrap_text(n.body, base, text_w, kToastBodyLines);
-        const float text_h =
-            title_sz + (body_lines.empty() ? 0.0f : gap + body_lines.size() * line_h);
+        std::vector<PlacedRun> title_runs, body_runs;
+        layout_runs(n.title, title_sz, title_sz, text_w, 1, textures, client, title_runs);
+        const int body_n =
+            layout_runs(n.body, base, line_h, text_w, kToastBodyLines, textures, client,
+                        body_runs);
+        const float text_h = title_sz + (body_n == 0 ? 0.0f : gap + body_n * line_h);
         const float inner_h = std::max(has_icon ? icon : 0.0f, text_h);
         const float h = inner_h + pad * 2.0f;
 
@@ -425,19 +512,30 @@ void draw_toasts(const Snapshot& snap, IAvatarTextures& textures, StateClient& c
             }
 
             // Title + body, vertically centered against the icon when the icon is taller.
+            // Emoji images are drawn once (no faux-bold double blend — it only darkens
+            // their edges) as font-size squares at the line top.
             const float tx = pos.x + text_x;
             float ty = pos.y + pad + (inner_h - text_h) * 0.5f;
-            if (!title_lines.empty()) {
-                // Faux-bold: draw the title twice, offset 1px, for extra weight.
-                const ImU32 tc = IM_COL32(255, 255, 255, 255);
-                dl->AddText(font, title_sz, ImVec2(tx, ty), tc, title_lines[0].c_str());
-                dl->AddText(font, title_sz, ImVec2(tx + 1.0f, ty), tc, title_lines[0].c_str());
+            const ImU32 tc = IM_COL32(255, 255, 255, 255);
+            for (const PlacedRun& r : title_runs) {
+                const ImVec2 rp(tx + r.pos.x, ty + r.pos.y);
+                if (r.tex != ImTextureID_Invalid) {
+                    dl->AddImage(r.tex, rp, ImVec2(rp.x + title_sz, rp.y + title_sz));
+                } else {
+                    // Faux-bold: draw the title twice, offset 1px, for extra weight.
+                    dl->AddText(font, title_sz, rp, tc, r.text.c_str());
+                    dl->AddText(font, title_sz, ImVec2(rp.x + 1.0f, rp.y), tc,
+                                r.text.c_str());
+                }
             }
             ty += title_sz + gap;
             const ImU32 bc = IM_COL32(185, 187, 196, 255);
-            for (const std::string& ln : body_lines) {
-                dl->AddText(ImVec2(tx, ty), bc, ln.c_str());
-                ty += line_h;
+            for (const PlacedRun& r : body_runs) {
+                const ImVec2 rp(tx + r.pos.x, ty + r.pos.y);
+                if (r.tex != ImTextureID_Invalid)
+                    dl->AddImage(r.tex, rp, ImVec2(rp.x + base, rp.y + base));
+                else
+                    dl->AddText(rp, bc, r.text.c_str());
             }
         }
         ImGui::End();
