@@ -166,6 +166,9 @@ int main(int argc, char** argv) {
 
     const std::vector<std::string> layer_env = {
         "VK_LAYER_PATH=" + layer_dir,
+        // Hide a system-wide installed choir layer (/usr/share/vulkan), which would
+        // shadow the build layer by name (XDG_DATA_HOME only hides per-user installs).
+        "VK_IMPLICIT_LAYER_PATH=" + layer_dir,
         "VK_INSTANCE_LAYERS=VK_LAYER_choir_overlay_x86_64",
         "VK_LOADER_LAYERS_ENABLE=VK_LAYER_choir_overlay_x86_64",
         "DISABLE_CHOIR_OVERLAY=",  // ensure not disabled

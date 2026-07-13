@@ -190,10 +190,12 @@ test('swapchain_color',
 )
 
 layer_dir = meson.current_build_dir() / '..' / 'src' / 'layer'
-# Point XDG_DATA_HOME at an empty dir so the loader does NOT discover a globally
-# *installed* choir implicit layer (~/.local/share/vulkan/implicit_layer.d) — which
-# would shadow (dedup by name) the build-tree layer we load via VK_LAYER_PATH and
-# make these tests depend on whatever is installed. Only the build layer must load.
+# Isolate from any *installed* choir implicit layer, which would shadow (dedup by
+# name) the build-tree layer we load via VK_LAYER_PATH and make these tests depend on
+# whatever is installed. XDG_DATA_HOME hides a per-user install
+# (~/.local/share/vulkan); VK_IMPLICIT_LAYER_PATH replaces the loader's implicit
+# search paths entirely, hiding a system-wide install (/usr/share/vulkan from the
+# pacman package) that XDG_DATA_HOME cannot. Only the build layer must load.
 xdg_isolate = meson.current_build_dir() / 'test-xdg-isolate'
 test('layer_loads',
   vk_min_present,
@@ -201,6 +203,7 @@ test('layer_loads',
   depends: [libchoir_overlay],
   env: {
     'VK_LAYER_PATH': layer_dir,
+    'VK_IMPLICIT_LAYER_PATH': layer_dir,
     'VK_INSTANCE_LAYERS': 'VK_LAYER_choir_overlay_x86_64',
     'VK_LOADER_LAYERS_ENABLE': 'VK_LAYER_choir_overlay_x86_64',
     'XDG_DATA_HOME': xdg_isolate,
