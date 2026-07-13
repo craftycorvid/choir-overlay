@@ -187,6 +187,55 @@ static void test_fetch_failure_no_file_retryable() {
     assert(fs::exists(path));
 }
 
+static void test_request_url_fetch_dedupe() {
+    const std::string dir = make_temp_dir();
+    FakeAvatarSource src;
+    AvatarCache cache(src, dir);
+
+    int ready_count = 0;
+    std::string ready_hash;
+    cache.ready = [&](const std::string& h, const std::string&, uint32_t,
+                      uint32_t) {
+        ++ready_count;
+        ready_hash = h;
+    };
+
+    cache.request_url("emoji.c.9001", "https://example.test/e.png");
+    assert(src.calls == 1);
+    assert(src.last_url == "https://example.test/e.png");
+    assert(ready_count == 1);
+    assert(ready_hash == "emoji.c.9001");
+    assert(fs::exists(fs::path(dir) / "emoji.c.9001.rgba"));
+
+    // Same key again: ready refires, no refetch.
+    cache.request_url("emoji.c.9001", "https://example.test/e.png");
+    assert(src.calls == 1);
+    assert(ready_count == 2);
+}
+
+static void test_notification_emoji_scan_dedupes() {
+    const std::string dir = make_temp_dir();
+    FakeAvatarSource src;
+    AvatarCache cache(src, dir);
+
+    // <:pog:1> appears in both title and body: fetched once. 😄 fetched once.
+    request_notification_emoji(cache, "hi <:pog:1>", "\U0001F604 <:pog:1>");
+    assert(src.calls == 2);
+    assert(fs::exists(fs::path(dir) / "emoji.c.1.rgba"));
+    assert(fs::exists(fs::path(dir) / "emoji.u.1f604.rgba"));
+}
+
+static void test_notification_emoji_cap() {
+    const std::string dir = make_temp_dir();
+    FakeAvatarSource src;
+    AvatarCache cache(src, dir);
+
+    std::string body;
+    for (int i = 0; i < 20; ++i) body += "<:e:" + std::to_string(100 + i) + "> ";
+    request_notification_emoji(cache, "", body);
+    assert(src.calls == 16);  // capped
+}
+
 static void test_empty_hash_is_noop() {
     const std::string dir = make_temp_dir();
     FakeAvatarSource src;
@@ -207,6 +256,9 @@ int main() {
     test_in_memory_dedup();
     test_disk_cache_hit_fresh_instance();
     test_fetch_failure_no_file_retryable();
+    test_request_url_fetch_dedupe();
+    test_notification_emoji_scan_dedupes();
+    test_notification_emoji_cap();
     test_empty_hash_is_noop();
     return 0;
 }

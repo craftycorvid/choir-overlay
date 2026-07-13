@@ -117,6 +117,10 @@ int main(int argc, char** argv) {
             !ev.notif.icon_hash.empty() && !ev.user_id.empty()) {
             avatars.request(ev.user_id, ev.notif.icon_hash);
         }
+        // Fetch any emoji images the toast text references (custom + unicode).
+        if (ev.kind == choir::RpcEvent::Notification) {
+            choir::request_notification_emoji(avatars, ev.notif.title, ev.notif.body);
+        }
     });
 
     // --- Pump the RPC client (~40ms; QSocketNotifier is a future optimization) ---

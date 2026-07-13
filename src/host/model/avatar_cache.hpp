@@ -13,8 +13,10 @@
 // the injectable AvatarSource interface; the production implementation
 // (QNetworkAccessManager + QImage) is wired in Task 11. Tests inject a fake.
 //
-// v1 scope: PARTICIPANT avatars only (user_id + hash -> CDN URL). Notification
-// icons (full URLs from Task 4) are out of scope here.
+// Participant avatars go through request() (user_id + hash -> CDN URL);
+// arbitrary images (notification emoji) go through request_url() with an
+// explicit cache key. Notification icons reuse request() via the author's
+// avatar hash.
 
 #include <cstdint>
 #include <functional>
@@ -50,6 +52,11 @@ public:
     // can still succeed).
     void request(const std::string& user_id, const std::string& avatar_hash);
 
+    // Ensure the image at `url` is cached under `key` (<dir>/<key>.rgba). Same
+    // dedupe / disk-hit / ready-firing / failure-is-retryable semantics as
+    // request(). No-op on empty key or url.
+    void request_url(const std::string& key, const std::string& url);
+
     // Fired when an avatar is available on disk at `path` (w x h).
     std::function<void(const std::string& hash, const std::string& path,
                        uint32_t w, uint32_t h)>
@@ -68,5 +75,11 @@ private:
     std::string dir_;
     std::unordered_set<std::string> known_;  // hashes cached this run
 };
+
+// Scan a notification's title+body for emoji (ipc/emoji.hpp) and request each
+// distinct emoji image, capped at 16 per notification. Free function so the
+// main.cpp RPC lambda stays wiring-only.
+void request_notification_emoji(AvatarCache& cache, const std::string& title,
+                                const std::string& body);
 
 }  // namespace choir

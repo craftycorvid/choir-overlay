@@ -1,6 +1,7 @@
 #include "model/avatar_cache.hpp"
 
 #include "ipc/avatar_file.hpp"  // choir::write_avatar_rgba
+#include "ipc/emoji.hpp"        // choir::emoji::split_runs / url_for
 
 #include <cstdio>
 #include <filesystem>
@@ -28,26 +29,31 @@ void AvatarCache::request(const std::string& user_id,
                           const std::string& avatar_hash) {
     // No avatar set on the participant: nothing to do.
     if (avatar_hash.empty()) return;
+    request_url(avatar_hash, cdn_url(user_id, avatar_hash));
+}
 
-    const std::string path = path_for(avatar_hash);
+void AvatarCache::request_url(const std::string& key, const std::string& url) {
+    if (key.empty() || url.empty()) return;
+
+    const std::string path = path_for(key);
 
     // Cache hit (in memory this run, or on disk from a prior run): fire ready
     // immediately, no fetch. The on-disk check also re-populates the in-memory
     // set so subsequent requests skip the filesystem stat.
     {
         std::error_code ec;
-        if (known_.count(avatar_hash) != 0 || fs::exists(path, ec)) {
-            known_.insert(avatar_hash);
-            if (ready) ready(avatar_hash, path, 64, 64);
+        if (known_.count(key) != 0 || fs::exists(path, ec)) {
+            known_.insert(key);
+            if (ready) ready(key, path, 64, 64);
             return;
         }
     }
 
     // Miss: fetch + decode + resize (the Qt seam).
-    std::optional<DecodedAvatar> img = src_.fetch(cdn_url(user_id, avatar_hash));
+    std::optional<DecodedAvatar> img = src_.fetch(url);
     if (!img) {
         std::fprintf(stderr, "choir: avatar fetch failed for hash %s\n",
-                     avatar_hash.c_str());
+                     key.c_str());
         return;  // not marked known -> retryable
     }
 
@@ -72,8 +78,24 @@ void AvatarCache::request(const std::string& user_id,
         return;
     }
 
-    known_.insert(avatar_hash);
-    if (ready) ready(avatar_hash, path, img->w, img->h);
+    known_.insert(key);
+    if (ready) ready(key, path, img->w, img->h);
+}
+
+void request_notification_emoji(AvatarCache& cache, const std::string& title,
+                                const std::string& body) {
+    // ponytail: cap guards the synchronous fetch loop (QtAvatarSource blocks up
+    // to its timeout per miss) from stalling the Qt event loop on emoji spam;
+    // go async if it ever matters.
+    constexpr size_t kMaxEmojiPerNotification = 16;
+    std::unordered_set<std::string> seen;
+    for (const std::string* s : {&title, &body}) {
+        for (const emoji::Run& r : emoji::split_runs(*s)) {
+            if (r.key.empty() || !seen.insert(r.key).second) continue;
+            if (seen.size() > kMaxEmojiPerNotification) return;
+            cache.request_url(r.key, emoji::url_for(r.key));
+        }
+    }
 }
 
 }  // namespace choir
