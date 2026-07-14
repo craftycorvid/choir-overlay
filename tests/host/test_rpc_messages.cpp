@@ -246,6 +246,28 @@ static void test_parse_notification() {
     assert(ev->notif.created_ms == 0);
 }
 
+static void test_parse_notification_restores_custom_emoji() {
+    // Discord's display `body` collapses custom emoji to ":name:"; the id survives only
+    // in message.content. The parser must re-inject the markup so the overlay can fetch
+    // the image. Unicode emoji (😄) and literal-looking shortcodes (:typed:) stay put.
+    json frame = json::parse(R"({
+        "cmd": "DISPATCH",
+        "evt": "NOTIFICATION_CREATE",
+        "data": {
+            "message": {
+                "id": "m1",
+                "content": "yo <:pog:9001> 😄 <a:blob:42> :typed:",
+                "author": { "id": "u1", "avatar": "h" }
+            },
+            "title": "T",
+            "body": "yo :pog: 😄 :blob: :typed:"
+        }
+    })");
+    auto ev = parse_event(frame);
+    assert(ev.has_value());
+    assert(ev->notif.body == "yo <:pog:9001> \xF0\x9F\x98\x84 <a:blob:42> :typed:");
+}
+
 static void test_parse_notification_no_message_id() {
     json frame = json::parse(R"({
         "cmd": "DISPATCH",
@@ -402,6 +424,7 @@ int main() {
     test_parse_channel_select_null();
 
     test_parse_notification();
+    test_parse_notification_restores_custom_emoji();
     test_parse_notification_no_message_id();
 
     test_parse_non_dispatch();

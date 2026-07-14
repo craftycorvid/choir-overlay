@@ -134,5 +134,21 @@ int main() {
     assert(url_for("avatarA").empty());
     assert(url_for("").empty());
 
+    // restore_custom_markup: re-inject stripped ids from the raw message content.
+    // Custom shortcodes get their markup back; unicode glyphs and shortcodes that
+    // aren't real custom emoji (not present as markup in `raw`) are left alone.
+    assert(restore_custom_markup("yo :pog: \xF0\x9F\x98\x84 :blob: :typed:",
+                                 "yo <:pog:9001> \xF0\x9F\x98\x84 <a:blob:42> :typed:") ==
+           "yo <:pog:9001> \xF0\x9F\x98\x84 <a:blob:42> :typed:");
+    // Same name twice -> both occurrences rewritten (last id wins on the map).
+    assert(restore_custom_markup(":a: :a:", "<:a:1> <:a:1>") == "<:a:1> <:a:1>");
+    // No custom markup in the raw content -> body returned verbatim (":wave:" stays text).
+    assert(restore_custom_markup(":wave: hi", "just text") == ":wave: hi");
+    // Feeding the restored body through split_runs yields a fetchable emoji run.
+    {
+        auto r = split_runs(restore_custom_markup(":pog:", "<:pog:9001>"));
+        assert(r.size() == 1 && r[0].key == "emoji.c.9001");
+    }
+
     return 0;
 }

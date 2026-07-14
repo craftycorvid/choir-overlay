@@ -78,8 +78,12 @@ Three pieces:
 - Manual: a real Discord message containing a custom emoji + 😄 while in voice shows both
   images in the toast (Vulkan layer; GL via `choir-run` optional).
 
-## Open questions
+## Resolved questions
 
-- Does NOTIFICATION_CREATE `body` carry raw `<:name:id>` markup (assumed) or some other
-  form? The parser is harmless either way; confirm with a live notification during manual
-  verification.
+- **Does NOTIFICATION_CREATE `body` carry raw `<:name:id>` markup?** No (confirmed live).
+  The `body` is Discord's display-rendered text: custom emoji are collapsed to `:name:`
+  (the id is dropped), while Unicode emoji survive as real glyphs. The id lives only in
+  `message.content` as raw `<a?:name:id>` markup. So the host re-injects it before handing
+  the body to the overlay: `emoji::restore_custom_markup(body, message.content)` maps each
+  markup token back onto the matching `:name:` shortcode. Unmatched shortcodes and Unicode
+  emoji are untouched; a no-op when content carries no markup (safe fallback = old behavior).

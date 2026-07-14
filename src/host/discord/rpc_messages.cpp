@@ -1,5 +1,7 @@
 #include "discord/rpc_messages.hpp"
 
+#include "ipc/emoji.hpp"
+
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -106,7 +108,11 @@ RpcEvent parse_notification(const json& data) {
     ev.notif.id = id;
 
     ev.notif.title = str_or(data, "title");
-    ev.notif.body = str_or(data, "body");
+    // Discord's display `body` collapses custom emoji to ":name:" (dropping the id the
+    // overlay needs to fetch the image); recover it from the raw message content, which
+    // still carries the "<a?:name:id>" markup. Unicode emoji arrive as glyphs either way.
+    ev.notif.body =
+        choir::emoji::restore_custom_markup(str_or(data, "body"), str_or(message, "content"));
     // Use the author's avatar HASH (not Discord's full icon_url) so the toast shares the
     // same hash-keyed avatar cache as voice participants; ev.user_id carries the author id
     // so the host can fetch it via AvatarCache. "" hash -> toast falls back to silhouette.

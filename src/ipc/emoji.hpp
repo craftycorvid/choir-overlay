@@ -36,4 +36,13 @@ std::string twemoji_stem(const std::vector<uint32_t>& cps);
 // emojis resolve to .png, which Discord's CDN serves as a static first frame.
 std::string url_for(const std::string& key);
 
+// Recover the custom-emoji ids that Discord strips from a notification's display
+// text. NOTIFICATION_CREATE's `body` renders each custom emoji as ":name:" (no id),
+// so split_runs can't build its image URL; the id survives only in the raw message
+// `content` as "<a?:name:id>". Map every markup token in `raw` onto the matching
+// ":name:" shortcode in `display` and return `display` with those shortcodes rewritten
+// to full markup. Unicode emoji (real glyphs in `display`) and unmatched ":name:" text
+// are left untouched. No-op when `raw` carries no custom-emoji markup.
+std::string restore_custom_markup(const std::string& display, const std::string& raw);
+
 }  // namespace choir::emoji

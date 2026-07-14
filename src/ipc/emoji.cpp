@@ -3,6 +3,7 @@
 #include <cctype>
 #include <cstdio>
 #include <string_view>
+#include <unordered_map>
 
 namespace choir::emoji {
 namespace {
@@ -220,6 +221,43 @@ std::string url_for(const std::string& key) {
         return "https://cdn.jsdelivr.net/gh/jdecked/twemoji@v17.0.3/assets/72x72/" +
                key.substr(kUnicode.size()) + ".png";
     return "";
+}
+
+std::string restore_custom_markup(const std::string& display, const std::string& raw) {
+    // Harvest name -> full "<a?:name:id>" markup from the raw message content.
+    std::unordered_map<std::string, std::string> markup;
+    for (const char* p = raw.data(), *end = p + raw.size(); p != end;) {
+        std::string name, id;
+        if (const size_t n = match_custom(p, end, name, id)) {
+            markup[name] = std::string(p, n);  // last wins on duplicate names
+            p += n;
+        } else {
+            ++p;
+        }
+    }
+    if (markup.empty()) return display;
+
+    // Rewrite each ":name:" shortcode in the display body back to its markup.
+    std::string out;
+    out.reserve(display.size());
+    const char* p = display.data();
+    const char* end = p + display.size();
+    while (p != end) {
+        if (*p == ':') {
+            const char* q = p + 1;
+            while (q != end && (std::isalnum(static_cast<unsigned char>(*q)) || *q == '_')) ++q;
+            if (q != end && *q == ':' && q > p + 1) {
+                auto it = markup.find(std::string(p + 1, q));
+                if (it != markup.end()) {
+                    out += it->second;
+                    p = q + 1;
+                    continue;
+                }
+            }
+        }
+        out += *p++;
+    }
+    return out;
 }
 
 }  // namespace choir::emoji
