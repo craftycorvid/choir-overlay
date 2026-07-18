@@ -268,6 +268,38 @@ static void test_parse_notification_restores_custom_emoji() {
     assert(ev->notif.body == "yo <:pog:9001> \xF0\x9F\x98\x84 <a:blob:42> :typed:");
 }
 
+static void test_parse_notification_strips_bidi_controls() {
+    // Discord wraps mention/username display text in Unicode bidirectional isolation
+    // controls (U+2068 FSI ... U+2069 PDI) and may emit other bidi format controls
+    // (U+200E LRM, U+202E RLO, U+202C PDF, ...). The overlay's bitmap font has no glyph
+    // for these zero-width codepoints, so they render as the fallback "?" (the reported
+    // "?username?"). Strip them from title AND body. Critically, U+200D ZWJ must SURVIVE
+    // — emoji sequences (e.g. 👩‍💻) join on it, and stripping it would break the glyph.
+    // \u escapes (not literal bytes) so the invisible controls are visible in source;
+    // json::parse decodes them to UTF-8. The emoji is the JSON surrogate pair for U+1F469
+    // + ZWJ + U+1F4BB.
+    json frame = json::parse(R"({
+        "cmd": "DISPATCH",
+        "evt": "NOTIFICATION_CREATE",
+        "data": {
+            "message": {
+                "id": "m1",
+                "content": "hey <@111>",
+                "author": { "id": "u1", "avatar": "h" }
+            },
+            "title": "\u2068Corvid\u2069",
+            "body": "hey \u2068@corvid\u2069 \u200e\u202eRLO\u202c \ud83d\udc69\u200d\ud83d\udcbb"
+        }
+    })");
+    auto ev = parse_event(frame);
+    assert(ev.has_value());
+    // Title: the FSI/PDI isolates are gone, the name is intact.
+    assert(ev->notif.title == "Corvid");
+    // Body: every bidi control (FSI, PDI, LRM, RLO, PDF) is gone, but the ZWJ inside the
+    // woman-technologist emoji survives so it still renders as a single joined glyph.
+    assert(ev->notif.body == "hey @corvid RLO \xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x92\xBB");
+}
+
 static void test_parse_notification_no_message_id() {
     json frame = json::parse(R"({
         "cmd": "DISPATCH",
@@ -425,6 +457,7 @@ int main() {
 
     test_parse_notification();
     test_parse_notification_restores_custom_emoji();
+    test_parse_notification_strips_bidi_controls();
     test_parse_notification_no_message_id();
 
     test_parse_non_dispatch();

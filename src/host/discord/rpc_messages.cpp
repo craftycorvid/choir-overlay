@@ -49,6 +49,36 @@ bool bool_or(const json& obj, const char* key, bool dflt = false) {
     return it->get<bool>();
 }
 
+// Strip Unicode bidirectional format controls from display text. Discord wraps
+// mention/username display names in bidi ISOLATES (U+2068 FSI ... U+2069 PDI) so
+// RTL names don't reorder surrounding text, and may emit the other bidi controls
+// (U+200E/200F marks, U+202A..U+202E embeddings/overrides). The overlay renders
+// with ImGui's default bitmap font, which has no glyph for these zero-width
+// codepoints, so each one draws as the fallback "?" — the reported "?username?".
+// They carry no visible content, so dropping them is lossless.
+//
+// All targets are 3-byte UTF-8: E2 80 8E/8F, E2 80 AA..AE, E2 81 A6..A9. We match
+// those exact byte triples and pass everything else (incl. malformed UTF-8) through
+// untouched. NB: U+200D ZWJ (E2 80 8D) is deliberately NOT in the set — emoji
+// sequences join on it and stripping it would break the glyph.
+std::string strip_bidi_controls(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size();) {
+        auto b0 = static_cast<unsigned char>(s[i]);
+        if (b0 == 0xE2 && i + 2 < s.size()) {
+            auto b1 = static_cast<unsigned char>(s[i + 1]);
+            auto b2 = static_cast<unsigned char>(s[i + 2]);
+            bool is_bidi =
+                (b1 == 0x80 && (b2 == 0x8E || b2 == 0x8F || (b2 >= 0xAA && b2 <= 0xAE))) ||
+                (b1 == 0x81 && (b2 >= 0xA6 && b2 <= 0xA9));
+            if (is_bidi) { i += 3; continue; }
+        }
+        out.push_back(s[i++]);
+    }
+    return out;
+}
+
 // Return the sub-object at `key`, or a reference to a shared empty object if it
 // is missing / not an object. Lets callers chain str_or/bool_or safely.
 const json& obj_or_empty(const json& obj, const char* key) {
@@ -107,12 +137,14 @@ RpcEvent parse_notification(const json& data) {
     if (id.empty()) id = str_or(data, "channel_id");
     ev.notif.id = id;
 
-    ev.notif.title = str_or(data, "title");
+    // strip_bidi_controls: Discord wraps mentions/usernames in bidi isolates that the
+    // overlay font can't render (they show as "?username?"); drop them from both fields.
+    ev.notif.title = strip_bidi_controls(str_or(data, "title"));
     // Discord's display `body` collapses custom emoji to ":name:" (dropping the id the
     // overlay needs to fetch the image); recover it from the raw message content, which
     // still carries the "<a?:name:id>" markup. Unicode emoji arrive as glyphs either way.
-    ev.notif.body =
-        choir::emoji::restore_custom_markup(str_or(data, "body"), str_or(message, "content"));
+    ev.notif.body = strip_bidi_controls(
+        choir::emoji::restore_custom_markup(str_or(data, "body"), str_or(message, "content")));
     // Use the author's avatar HASH (not Discord's full icon_url) so the toast shares the
     // same hash-keyed avatar cache as voice participants; ev.user_id carries the author id
     // so the host can fetch it via AvatarCache. "" hash -> toast falls back to silhouette.
