@@ -7,8 +7,11 @@
 
 #include "overlay_ui.hpp"
 
+#include <unistd.h>
+
 #include <algorithm>
 #include <cfloat>
+#include <cstdlib>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -23,6 +26,39 @@
 #include "state_client.hpp"
 
 namespace choir {
+
+// ImGui's built-in ProggyClean covers U+0020..U+00FF only, so everything past Latin-1 —
+// bullets, curly quotes, em dashes, ellipsis, Cyrillic/Greek/CJK names — draws as the
+// "?" fallback glyph. Swap in a system Unicode TTF. ImGui 1.92 rasterizes glyphs ON
+// DEMAND, so full coverage costs only the glyphs we actually draw.
+bool load_overlay_font() {
+    auto load = [](const char* path) {
+        // 13px is ProggyClean's size, so swapping the font moves no layout.
+        return ::access(path, R_OK) == 0 &&
+               ImGui::GetIO().Fonts->AddFontFromFileTTF(path, 13.0f) != nullptr;
+    };
+    if (const char* env = std::getenv("CHOIR_FONT"); env && *env && load(env)) return true;
+
+    // Distro-agnostic list, first hit wins. The "/run/host" pass covers Steam's
+    // pressure-vessel container, which mounts the host filesystem there — the runtime
+    // image itself may ship no fonts at all.
+    static constexpr const char* kPrefixes[] = {"", "/run/host"};
+    static constexpr const char* kFonts[] = {
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/TTF/LiberationSans-Regular.ttf",
+    };
+    for (const char* prefix : kPrefixes)
+        for (const char* font : kFonts)
+            if (load((std::string(prefix) + font).c_str())) return true;
+    return false;  // nothing installed: caller keeps ImGui's built-in font
+}
+
 namespace {
 
 // --- Layout constants (logical px at scale 1.0; multiplied by config.scale). ---

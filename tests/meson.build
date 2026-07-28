@@ -286,3 +286,16 @@ if egl_dep.found() and gl_dep.found()
     ),
   )
 endif
+
+# Font coverage: assert the overlay's font has glyphs for the punctuation / non-Latin-1
+# text that Discord names and messages carry (ImGui's built-in ProggyClean stops at
+# U+00FF and draws "?" past it). Links the shared overlay core only — no GPU, no backend.
+# Exit 77 (no system Unicode font installed) is propagated by meson as a SKIP.
+test('font',
+  executable('t_font',
+    'overlay/test_font.cpp',
+    link_with: [libchoir_overlay_shared, libchoir_ipc],
+    include_directories: [overlay_inc, ipc_inc, include_directories('../src')],
+    dependencies: [imgui_dep, json_dep, dependency('threads')],
+  ),
+)

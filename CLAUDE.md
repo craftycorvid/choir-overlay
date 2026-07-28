@@ -9,7 +9,7 @@ VERIFY_LEVEL=tdd
 ## Build & test
 
 - Build: `meson compile -C build` (first time: `meson setup build . --buildtype=release`)
-- Test: `meson test -C build` (23 tests; the golden layer tests render on the real GPU)
+- Test: `meson test -C build` (24 tests; the golden layer tests render on the real GPU)
 - Verify (what the powers gate runs): `scripts/verify.sh`
 - Per-user install (layer + host → ~/.local): `bash packaging/install-user.sh`
   - This is a Vulkan **layer** change → **relaunch the game** to pick it up.
@@ -101,4 +101,6 @@ These are all real LWJGL/Minecraft+Iris failures, in the order they bit us:
 `DISABLE_CHOIR_OVERLAY=1` (off for one launch) · `CHOIR_DEBUG_FORMAT=1` (log swapchain
 format/colorspace/transfer/nits) · `CHOIR_HDR_NITS=<80..1000>` · `CHOIR_DEBUG_LAZY_INIT=1` ·
 `CHOIR_DEBUG_AVATARS=1` · `CHOIR_SOCKET=<name>` (abstract-socket override) ·
+`CHOIR_FONT=<path.ttf>` (overlay font override; default is the first system DejaVu/Noto/
+Liberation found — see `load_overlay_font`) ·
 `CHOIR_GL_DEBUG=1` (GL interposer: log injection + comm-name + gating decision + per-context init).

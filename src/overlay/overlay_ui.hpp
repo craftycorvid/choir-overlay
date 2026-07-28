@@ -24,6 +24,13 @@ namespace choir {
 struct Snapshot;       // ipc/state.hpp
 class StateClient;     // src/overlay/state_client.hpp
 
+// Give the current ImGui context a system Unicode font, replacing the built-in
+// ProggyClean (which stops at U+00FF and draws "?" for anything beyond — bullets, curly
+// quotes, dashes, non-Latin names). Call once per context, right after CreateContext();
+// `CHOIR_FONT=<path>` overrides the search. Returns false if no font was found, in which
+// case ImGui keeps its built-in one and the overlay still draws.
+bool load_overlay_font();
+
 // Draw the overlay for `snap` into the current ImGui frame.
 //   * `textures`  resolves participant avatar ImTextureIDs by hash (render thread).
 //   * `client`    supplies the retained AvatarReq for any not-yet-loaded avatar, so a

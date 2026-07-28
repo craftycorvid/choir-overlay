@@ -52,9 +52,9 @@ bool bool_or(const json& obj, const char* key, bool dflt = false) {
 // Strip Unicode bidirectional format controls from display text. Discord wraps
 // mention/username display names in bidi ISOLATES (U+2068 FSI ... U+2069 PDI) so
 // RTL names don't reorder surrounding text, and may emit the other bidi controls
-// (U+200E/200F marks, U+202A..U+202E embeddings/overrides). The overlay renders
-// with ImGui's default bitmap font, which has no glyph for these zero-width
-// codepoints, so each one draws as the fallback "?" — the reported "?username?".
+// (U+200E/200F marks, U+202A..U+202E embeddings/overrides). Fonts generally carry no
+// glyph for these zero-width codepoints, so each one draws as ImGui's fallback "?" —
+// the reported "?username?".
 // They carry no visible content, so dropping them is lossless.
 //
 // All targets are 3-byte UTF-8: E2 80 8E/8F, E2 80 AA..AE, E2 81 A6..A9. We match

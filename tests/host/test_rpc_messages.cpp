@@ -271,8 +271,8 @@ static void test_parse_notification_restores_custom_emoji() {
 static void test_parse_notification_strips_bidi_controls() {
     // Discord wraps mention/username display text in Unicode bidirectional isolation
     // controls (U+2068 FSI ... U+2069 PDI) and may emit other bidi format controls
-    // (U+200E LRM, U+202E RLO, U+202C PDF, ...). The overlay's bitmap font has no glyph
-    // for these zero-width codepoints, so they render as the fallback "?" (the reported
+    // (U+200E LRM, U+202E RLO, U+202C PDF, ...). Fonts carry no glyph for these
+    // zero-width codepoints, so they render as ImGui's fallback "?" (the reported
     // "?username?"). Strip them from title AND body. Critically, U+200D ZWJ must SURVIVE
     // — emoji sequences (e.g. 👩‍💻) join on it, and stripping it would break the glyph.
     // \u escapes (not literal bytes) so the invisible controls are visible in source;

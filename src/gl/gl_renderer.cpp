@@ -64,6 +64,7 @@ bool GlRenderer::init() {
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;            // never write imgui.ini from inside the game
     io.LogFilename = nullptr;
+    load_overlay_font();  // system Unicode TTF; "?" for every glyph past U+00FF without it
     // nullptr => the backend auto-detects desktop GL vs GLES from the current context.
     if (!ImGui_ImplOpenGL3_Init(nullptr)) {
         ImGui::DestroyContext(ctx_); ctx_ = nullptr; return false;

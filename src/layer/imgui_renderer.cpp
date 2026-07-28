@@ -110,6 +110,7 @@ bool ImguiRenderer::init(VkInstance inst, VkPhysicalDevice phys, VkDevice dev,
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;   // never write imgui.ini from inside the game
     io.LogFilename = nullptr;
+    load_overlay_font();        // system Unicode TTF; "?" for every glyph past U+00FF without it
 
     // --- Feed the vendored backend its Vulkan function pointers, resolved through the
     // layer's OWN dispatch chain (gipa / disp.GetDeviceProcAddr). The backend is built
