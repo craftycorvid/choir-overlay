@@ -55,4 +55,8 @@ std::string config_path() {
     return config_home() + "/choir/config.json";
 }
 
+std::string autostart_path() {
+    return config_home() + "/autostart/choir.desktop";
+}
+
 } // namespace choir

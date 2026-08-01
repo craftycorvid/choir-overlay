@@ -1,8 +1,10 @@
 #include "ui/settings_window.hpp"
 
+#include "config/autostart.hpp"
 #include "ipc/paths.hpp"
 
 #include <QCheckBox>
+#include <QCoreApplication>
 #include <QComboBox>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -48,6 +50,12 @@ SettingsWindow::SettingsWindow(Config initial, QWidget* parent)
 
 void SettingsWindow::build_ui() {
     auto* root = new QVBoxLayout(this);
+
+    // --- Startup (an XDG autostart entry, applied on Save like everything else) ---
+    autostart_ = new QCheckBox(QStringLiteral("Start Choir on login"), this);
+    autostart_->setToolTip(QStringLiteral(
+        "Writes an autostart entry to ~/.config/autostart/choir.desktop."));
+    root->addWidget(autostart_);
 
     // --- Appearance ---
     auto* appearance = new QGroupBox(QStringLiteral("Appearance"), this);
@@ -104,6 +112,8 @@ void SettingsWindow::build_ui() {
 }
 
 void SettingsWindow::load_into_widgets() {
+    autostart_->setChecked(autostart_enabled(autostart_path()));
+
     const AppearanceConfig& a = cfg_.appearance;
     anchor_->setCurrentIndex(anchor_to_index(a.anchor));
     scale_->setValue(static_cast<int>(a.scale * 100.0f + 0.5f));
@@ -141,7 +151,21 @@ Config SettingsWindow::gather_from_widgets() const {
 void SettingsWindow::on_save_clicked() {
     cfg_ = gather_from_widgets();
     cfg_.save(config_path());
+
+    // Autostart lives on the filesystem, not in cfg_. If the write is refused, snap the
+    // box back to the truth rather than leaving the UI claiming something that isn't so.
+    set_autostart(autostart_path(), autostart_->isChecked(),
+                  QCoreApplication::applicationFilePath().toStdString());
+    autostart_->setChecked(autostart_enabled(autostart_path()));
+
     emit config_changed(cfg_);
+}
+
+void SettingsWindow::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+    // The window outlives each open, and the autostart entry can change behind us
+    // (install-user.sh --autostart, or the DE's own startup-apps UI). Re-read it.
+    autostart_->setChecked(autostart_enabled(autostart_path()));
 }
 
 }  // namespace choir

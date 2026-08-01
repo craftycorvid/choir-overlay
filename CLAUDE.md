@@ -9,7 +9,7 @@ VERIFY_LEVEL=tdd
 ## Build & test
 
 - Build: `meson compile -C build` (first time: `meson setup build . --buildtype=release`)
-- Test: `meson test -C build` (25 tests; the golden layer tests render on the real GPU)
+- Test: `meson test -C build` (26 tests; the golden layer tests render on the real GPU)
 - Verify (what the powers gate runs): `scripts/verify.sh`
 - Per-user install (layer + host → ~/.local): `bash packaging/install-user.sh`
   - This is a Vulkan **layer** change → **relaunch the game** to pick it up.

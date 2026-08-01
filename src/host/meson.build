@@ -17,6 +17,7 @@ host_core_sources = files(
   'model/avatar_cache.cpp',
   'config/config.cpp',
   'config/denylist.cpp',
+  'config/autostart.cpp',
 )
 
 libchoir_host_core = static_library('choir_host_core',

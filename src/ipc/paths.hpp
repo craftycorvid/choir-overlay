@@ -9,6 +9,7 @@ std::string cache_home();          // $XDG_CACHE_HOME or $HOME/.cache
 std::string avatar_cache_dir();    // cache_home()/choir/avatars
 std::string config_home();         // $XDG_CONFIG_HOME or $HOME/.config
 std::string config_path();         // config_home()/choir/config.json
+std::string autostart_path();      // config_home()/autostart/choir.desktop (XDG autostart)
 
 // The host<->layer IPC uses an ABSTRACT-namespace unix socket (not a filesystem
 // path) so it crosses Steam's pressure-vessel container boundary: filesystem

@@ -42,11 +42,15 @@ Installs everything under `$HOME` and registers the Vulkan layer:
 
 Make sure `~/.local/bin` is on your `PATH` (the installer warns you if it isn't).
 
-**Autostart (opt-in):** the host does _not_ start on login by default.
+**Autostart (opt-in):** the host does _not_ start on login by default. Tick
+**Start Choir on login** in the settings window, or at install time:
 
 ```sh
 bash packaging/install-user.sh --autostart
 ```
+
+Either way it's the same `~/.config/autostart/choir.desktop` entry, so your DE's own
+startup-apps list stays in sync with the checkbox.
 
 ### Arch (pacman)
 

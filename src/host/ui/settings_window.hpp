@@ -6,6 +6,7 @@
 //   - appearance: anchor combo, scale slider, HDR nits spinbox, show-all-members
 //     checkbox, toast anchor + duration
 //   - denylist editor (one glob per line)
+//   - start-on-login checkbox (an XDG autostart entry, NOT part of Config)
 //
 // Saving persists to config_path() and emits config_changed(Config) so main()
 // can push the new appearance into OverlayState and rebuild the Denylist.
@@ -22,6 +23,7 @@ class QSlider;
 class QCheckBox;
 class QSpinBox;
 class QPlainTextEdit;
+class QShowEvent;
 QT_END_NAMESPACE
 
 namespace choir {
@@ -37,6 +39,9 @@ public:
 signals:
     // Emitted after Save: the new config has been written to config_path().
     void config_changed(const choir::Config& cfg);
+
+protected:
+    void showEvent(QShowEvent* event) override;
 
 private slots:
     void on_save_clicked();
@@ -54,6 +59,8 @@ private:
     QCheckBox* show_all_ = nullptr;
     QComboBox* toast_anchor_ = nullptr;
     QSpinBox* toast_duration_ = nullptr;
+
+    QCheckBox* autostart_ = nullptr;
 
     QPlainTextEdit* denylist_ = nullptr;
 };

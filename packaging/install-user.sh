@@ -126,7 +126,8 @@ echo "        choir-run <game>           (direct)"
 echo "  4. Verify the layer is visible to Vulkan:"
 echo "        vulkaninfo | grep -i choir"
 if [ "${AUTOSTART}" -eq 0 ]; then
-  echo "  5. (Optional) start choir on login:"
+  echo "  5. (Optional) start choir on login — tick 'Start Choir on login' in the"
+  echo "     settings window, or:"
   echo "        bash packaging/install-user.sh --autostart"
   echo "     or copy packaging/choir.desktop to ${AUTOSTART_DIR}/ and set X-GNOME-Autostart-enabled=true"
 fi
