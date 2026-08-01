@@ -24,6 +24,13 @@ VERIFY_LEVEL=tdd
     process → **relaunch the game** to pick them up. Host-only changes just need `choir`
     restarted.
 - Pacman package: `cd packaging && makepkg -si` (uses `-Dbuild_tests=false`)
+- Release: bump `version:` in `meson.build` + `pkgver` in `packaging/PKGBUILD`, tag `vX.Y.Z`,
+  `gh release create` (source-only — GitHub attaches the tarball itself).
+- AUR (two packages; `packaging/aur/{git,stable}/` are the source of truth, the AUR repos are
+  separate git remotes). Edit the PKGBUILD, then in that dir:
+  `makepkg --printsrcinfo > .SRCINFO && makepkg -f` (always build before publishing), copy both
+  files into a clone of `ssh://aur@aur.archlinux.org/<pkgname>.git`, commit, push.
+  `stable/` needs the new tarball's `sha256sum` after the GitHub release exists.
 - Confirm the layer loads: `vulkaninfo | grep -i choir`; for GL, `CHOIR_GL_DEBUG=1 choir-run <game>`
 
 ## Architecture
