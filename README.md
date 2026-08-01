@@ -66,7 +66,8 @@ meson compile -C build
 ```
 
 Dependencies: Qt6 (Core, Gui, Widgets, Network, Svg), the Vulkan loader, and libglvnd.
-Dear ImGui and nlohmann/json are vendored, so the build runs offline.
+Dear ImGui and nlohmann/json are fetched automatically by Meson on first setup, so the
+first build needs network access.
 
 To build and run the tests (some render on a real GPU):
 

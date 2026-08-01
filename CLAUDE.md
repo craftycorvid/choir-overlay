@@ -54,7 +54,10 @@ are compiled in via `choir.qrc` AND installed to hicolor. The tray glyph is reco
 white/black at runtime from `QStyleHints::colorScheme()`. Rendering them needs Qt's SVG
 plugins, so the host links `Qt6::Svg` — without it `QIcon` yields a blank pixmap silently.
 
-Dear ImGui is vendored (`subprojects/`), built **static** into each backend with its own
+Dear ImGui comes from a meson **wrap** (`subprojects/imgui.wrap` — only the .wrap files are
+committed, so a fresh clone downloads on first `meson setup`; both PKGBUILDs pre-seed
+`subprojects/packagecache/` to keep the package build offline), built **static** into each
+backend with its own
 renderer backend TU (`imgui_impl_vulkan_unity.cpp` / `imgui_impl_opengl3_unity.cpp`); the
 Vulkan layer feeds ImGui function pointers via its own dispatch, never the global loader.
 
