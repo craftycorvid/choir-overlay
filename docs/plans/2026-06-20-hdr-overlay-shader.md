@@ -8,7 +8,7 @@
 
 **Tech Stack:** C++17, Vulkan, Dear ImGui 1.92.5 (vendored), GLSL→SPIR-V via glslangValidator, Meson.
 
-**Spec:** `docs/superpowers/specs/2026-06-20-hdr-overlay-shader-design.md`
+**Spec:** `docs/specs/2026-06-20-hdr-overlay-shader-design.md`
 
 ---
 

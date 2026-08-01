@@ -8,7 +8,7 @@
 
 **Tech Stack:** Meson, Vulkan implicit-layer manifest, Arch `makepkg`/PKGBUILD, bash.
 
-**Spec:** `docs/superpowers/specs/2026-06-20-native-arch-packaging-design.md`
+**Spec:** `docs/specs/2026-06-20-native-arch-packaging-design.md`
 
 ---
 

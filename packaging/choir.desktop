@@ -2,7 +2,7 @@
 Type=Application
 Name=Choir
 GenericName=Discord Voice Overlay
-Comment=Wayland Discord voice overlay for Vulkan games (not affiliated with Discord Inc.)
+Comment=Discord voice overlay for Vulkan and OpenGL games (not affiliated with Discord Inc.)
 # Resolved to an absolute path (~/.local/bin/choir) by packaging/install-user.sh.
 Exec=choir
 Icon=choir

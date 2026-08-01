@@ -1,140 +1,90 @@
 # Choir
 
-Choir is **an overlay for Discord** — a Wayland-only, display-only voice panel and
-notification overlay that renders _inside_ Vulkan games (native, DXVK, VKD3D) via an
-injected Vulkan implicit layer.
+**An overlay for Discord that works on Linux.** Discord ships no in-game overlay for Linux
+at all, so Choir draws one itself: while you're in a voice channel, your games show a panel
+of who's in the call — avatars, who's talking, who's muted or deafened — plus toasts for
+incoming Discord notifications.
 
-A Qt6 host (`choir`, a tray app) owns the connection to the Discord desktop client's
-local RPC, the state model, and the avatar cache, and serves read-only state to a Vulkan
-layer (`libchoir_overlay.so`) injected into each game. The overlay is display-only: it is
-click-through and read-only, carries its own private copy of Dear ImGui (it exports only
-the three Vulkan loader entrypoints, so it can't interfere with a game's own ImGui), and
-is designed never to crash the game.
+It works in **Vulkan** games (native, and Windows games through Proton/DXVK/VKD3D) and in
+**OpenGL** games. The overlay is display-only — you read it, you don't click it.
 
 > **Not affiliated with, endorsed by, or sponsored by Discord Inc.** "Discord" is a
 > trademark of Discord Inc.; Choir is an independent, unofficial overlay.
 
-## Requirements
-
-- A **Wayland** session.
-- **Vulkan** (the loader + a working ICD). The overlay renders only in Vulkan games —
-  native Vulkan or DXVK/VKD3D (Proton) titles. SDR and HDR (scRGB / HDR10) are both
-  supported.
-- The **Discord desktop client** running (the official client, or anything that exposes the local `discord-ipc-*` socket).
-- **Qt6** (Core, Gui, Widgets, Network, Svg) for the host.
-- 64-bit (`x86_64`).
-
 ## Install
 
-### Per-user (any distro, no root)
+**Arch (AUR)** — [`choir-overlay-git`](https://aur.archlinux.org/packages/choir-overlay-git):
+
+```sh
+yay -S choir-overlay-git      # or: paru -S choir-overlay-git
+```
+
+**Any distro, no root** — installs under `$HOME`:
 
 ```sh
 bash packaging/install-user.sh
 ```
 
-Installs everything under `$HOME` and registers the Vulkan layer:
-
-| Path                                                               | What                        |
-| ------------------------------------------------------------------ | --------------------------- |
-| `~/.local/bin/choir`                                               | the Qt host (tray app)      |
-| `~/.local/lib/choir/libchoir_overlay.so`                           | the injected Vulkan layer   |
-| `~/.local/share/vulkan/implicit_layer.d/choir_overlay.x86_64.json` | the implicit-layer manifest |
-
-Make sure `~/.local/bin` is on your `PATH` (the installer warns you if it isn't).
-
-**Autostart (opt-in):** the host does _not_ start on login by default. Tick
-**Start Choir on login** in the settings window, or at install time:
-
-```sh
-bash packaging/install-user.sh --autostart
-```
-
-Either way it's the same `~/.config/autostart/choir.desktop` entry, so your DE's own
-startup-apps list stays in sync with the checkbox.
-
-### Arch (pacman)
-
-```sh
-cd packaging && makepkg -si
-```
-
-Builds and installs `choir` system-wide via pacman (`sudo pacman -R choir` removes it).
+Make sure `~/.local/bin` is on your `PATH` (the installer warns you if it isn't). To
+uninstall: `bash packaging/uninstall-user.sh` (add `--purge` to drop your settings too).
 
 ## Usage
 
-Once installed, the overlay is active on **all** Vulkan games by default (minus the
-denylist).
+1. Run `choir`. A tray icon appears and connects to your running Discord client.
+2. On first run, **approve the Discord authorization prompt**. This happens once.
+3. **Join a voice channel** and launch your game.
 
-1. Run the host: `choir`. A tray icon appears, and it connects to your running Discord
-   client.
-2. On first run, **approve the one-time Discord authorization prompt** (the consent dialog
-   from your Discord client). Use the tray's **Reconnect** if you ever need to
-   re-establish the connection.
-3. **Join a voice channel.** The voice panel (participants, active-speaker highlight,
-   mute/deaf glyphs) appears in-game; Discord notifications show as toasts. Leaving the
-   channel hides the overlay.
+**Vulkan games: nothing to do.** The overlay is active automatically.
 
-### Settings
-
-Open the settings window from the tray to configure the panel **anchor**, **scale**,
-**HDR brightness** (paper-white nits, for HDR displays), whether to show all members or
-only active speakers, the toast anchor/duration, and the **denylist**.
-
-### Disabling the overlay
-
-- **Per game (one launch):** set `DISABLE_CHOIR_OVERLAY=1`. For Steam, put it in the
-  game's **Launch Options**:
-
-  ```
-  DISABLE_CHOIR_OVERLAY=1 %command%
-  ```
-
-- **Denylist:** processes matching the denylist never get the overlay. Defaults include
-  the Discord client, Steam (`steamwebhelper`), `gamescope`, OBS, and browsers. Edit it
-  (case-insensitive globs matched against the process name) in the settings window.
-
-### Verify the layer is visible
+**OpenGL games: launch them with `choir-run`.** OpenGL gives us no way to hook in
+automatically, so you opt in per game:
 
 ```sh
-vulkaninfo | grep -i choir
-# -> VK_LAYER_choir_overlay_x86_64 ... (implicit layer)
+choir-run <game>       # directly
+choir-run %command%    # Steam → game Properties → Launch Options
 ```
+
+Open **Settings** from the tray to change where the panel sits, its size and brightness,
+notification behaviour, whether Choir starts on login, and which programs to skip.
+
+### Environment variables
+
+| Variable                   | What it does                                              |
+| -------------------------- | --------------------------------------------------------- |
+| `DISABLE_CHOIR_OVERLAY=1`  | Turn the overlay off for one launch                        |
+| `CHOIR_HDR_NITS=<80..1000>`| Overlay brightness on HDR displays (also in Settings)      |
+| `CHOIR_FONT=<path.ttf>`    | Use a different overlay font                               |
+| `CHOIR_GL_DEBUG=1`         | Log what the OpenGL overlay is doing, when it isn't showing |
+
+In Steam, put these in **Launch Options**, e.g. `DISABLE_CHOIR_OVERLAY=1 %command%`.
 
 ## Build from source
 
 ```sh
-meson setup build
+meson setup build --buildtype=release
 meson compile -C build
 ```
 
-With the test suite:
+Dependencies: Qt6 (Core, Gui, Widgets, Network, Svg), the Vulkan loader, and libglvnd.
+Dear ImGui and nlohmann/json are vendored, so the build runs offline.
+
+To build and run the tests (some render on a real GPU):
 
 ```sh
 meson setup build -Dbuild_tests=true
 meson test -C build
 ```
 
-Dear ImGui and nlohmann/json are vendored under `subprojects/`, so the build runs offline.
-See [`CLAUDE.md`](CLAUDE.md) for the architecture overview and contributor notes.
+See [`CLAUDE.md`](CLAUDE.md) for the architecture and contributor notes.
 
 ## Limitations
 
-- **Vulkan only** — no OpenGL games.
-- **Wayland only**, **64-bit only** (`x86_64`).
-- **Display-only** — the overlay is click-through and non-interactive: you read it, you
-  don't click it.
-
-## Uninstall
-
-Per-user install:
-
-```sh
-bash packaging/uninstall-user.sh
-```
-
-Removes the manifest, the `.so`, the `choir` binary, and the autostart entry (all under
-`$HOME`). Add `--purge` to also remove your config and avatar cache (`~/.config/choir`,
-`~/.cache/choir`). For the pacman package: `sudo pacman -R choir`.
+- **Display-only.** The overlay is click-through: you can't click members or type in it.
+- **64-bit only** (`x86_64`).
+- **HDR in Vulkan only.** The OpenGL overlay is SDR.
+- **Tested on Wayland only.** Nothing in Choir is Wayland-specific, but X11 is untested.
+- **No LIVE or watching indicators.** Discord's local API doesn't report streaming or video
+  state, so Choir can't show it.
 
 ## License
 

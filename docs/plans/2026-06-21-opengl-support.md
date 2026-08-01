@@ -8,7 +8,7 @@
 
 **Tech Stack:** C++20, meson, Dear ImGui (vendored, static) + `imgui_impl_opengl3`, EGL/GLX/GL (dynamically resolved), libdl. Mirrors the existing Vulkan-layer build patterns.
 
-**Source spec:** `docs/superpowers/specs/2026-06-21-opengl-support-design.md`
+**Source spec:** `docs/specs/2026-06-21-opengl-support-design.md`
 
 ---
 

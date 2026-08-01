@@ -8,7 +8,7 @@
 
 **Tech Stack:** C++20, Meson; Qt6 (Widgets + Network) for the host; Dear ImGui (MIT) + Vulkan loader/headers for the layer; nlohmann/json (MIT, header-only) for all JSON; POSIX unix sockets for the local IPC. 64-bit, Vulkan-only for v1. License: MIT.
 
-**Reference spec:** `docs/superpowers/specs/2026-06-17-discord-overlay-design.md` (read it first — it holds the locked decisions, risks, and verified research references).
+**Reference spec:** `docs/specs/2026-06-17-discord-overlay-design.md` (read it first — it holds the locked decisions, risks, and verified research references).
 
 ---
 

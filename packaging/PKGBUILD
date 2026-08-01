@@ -1,6 +1,6 @@
 # Maintainer: craftycorvid <me@ivanff.com>
 #
-# Local-buildable pacman package for Choir (a Wayland Discord voice overlay for Vulkan
+# Local-buildable pacman package for Choir (a Discord voice overlay for Vulkan + OpenGL
 # games). Run `makepkg -si` from this directory to build + install it.
 #
 # This sources the working tree this PKGBUILD lives in (offline: imgui + nlohmann_json are
@@ -11,7 +11,7 @@
 pkgname=choir
 pkgver=0.0.1
 pkgrel=1
-pkgdesc="Wayland Discord voice overlay for Vulkan + OpenGL games (not affiliated with Discord Inc.)"
+pkgdesc="Discord voice overlay for Vulkan + OpenGL games (not affiliated with Discord Inc.)"
 arch=('x86_64')
 url="https://github.com/craftycorvid/choir-overlay"
 license=('MIT')

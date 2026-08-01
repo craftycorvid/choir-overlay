@@ -79,7 +79,7 @@ bool set_autostart(const std::string& path, bool on, const std::string& exec_pat
     out << "[Desktop Entry]\n"
            "Type=Application\n"
            "Name=Choir\n"
-           "Comment=Wayland Discord voice overlay for Vulkan games "
+           "Comment=Discord voice overlay for Vulkan and OpenGL games "
            "(not affiliated with Discord Inc.)\n"
            "Exec=" << quote_exec(exec_path) << "\n"
            "Icon=choir\n"

@@ -1,27 +1,39 @@
 # Choir
 
-A Wayland-only, Vulkan-only Discord voice overlay for Linux: draws an ImGui overlay on top
-of Vulkan games (incl. DXVK/VKD3D), never on the desktop. Not affiliated with Discord.
+A Discord voice overlay for Linux: draws an ImGui overlay on top of games, never on the
+desktop. Vulkan (incl. DXVK/VKD3D) via an implicit layer — automatic; OpenGL via an
+`LD_PRELOAD` interposer — opt-in per launch. Not affiliated with Discord.
+
+We hook the game's **present call**, not the window system: there is no Wayland/X11 code or
+build dep anywhere (the only `WAYLAND` string is gamescope's env var). Wayland is the target
+and the only tested session — it's why Choir exists, since Discord's own overlay fails there
+— but don't add a Wayland assumption; nothing currently justifies one.
 
 VERIFY_LEVEL=tdd
 <!-- powers verify-gate: source changes without test changes are blocked. -->
 
 ## Build & test
 
-- Build: `meson compile -C build` (first time: `meson setup build . --buildtype=release`)
-- Test: `meson test -C build` (26 tests; the golden layer tests render on the real GPU)
+- Build: `meson compile -C build`
+  (first time: `meson setup build . --buildtype=release -Dbuild_tests=true` — `build_tests`
+  defaults to **false**, so a plain setup builds no tests)
+- Test: `meson test -C build` (26 tests; the golden layer/GL tests render on the real GPU)
 - Verify (what the powers gate runs): `scripts/verify.sh`
-- Per-user install (layer + host → ~/.local): `bash packaging/install-user.sh`
-  - This is a Vulkan **layer** change → **relaunch the game** to pick it up.
+- Per-user install (both backends + host → ~/.local): `bash packaging/install-user.sh`
+  - Backend changes (`src/layer/`, `src/gl/`, `src/overlay/`) are injected into the game
+    process → **relaunch the game** to pick them up. Host-only changes just need `choir`
+    restarted.
 - Pacman package: `cd packaging && makepkg -si` (uses `-Dbuild_tests=false`)
-- Confirm the layer loads: `vulkaninfo | grep -i choir`
+- Confirm the layer loads: `vulkaninfo | grep -i choir`; for GL, `CHOIR_GL_DEBUG=1 choir-run <game>`
 
 ## Architecture
 
-Two components talking over an **abstract unix socket** (shared netns → reaches inside Steam
-pressure-vessel containers):
+A host and two injected backends, talking over an **abstract unix socket** (shared netns →
+reaches inside Steam pressure-vessel containers):
 
-- **Host** (`src/host/`) — Qt6 tray + Discord RPC client + IPC state server (the `choir` binary).
+- **Host** (`src/host/`) — Qt6 tray + settings window + Discord RPC client + IPC state server
+  (the `choir` binary). Qt-free logic lives in `libchoir_host_core` so it unit-tests without Qt;
+  Qt-using TUs (`ui/`, `server/`, `discord/qt_http.cpp`) compile straight into the executable.
 - **Vulkan implicit layer** (`src/layer/`) — `libchoir_overlay.so`, an implicit GLOBAL layer
   loaded into every Vulkan game; hooks `vkQueuePresentKHR` and renders ImGui into the swapchain
   image before present.
@@ -29,9 +41,18 @@ pressure-vessel containers):
   `choir-run` wrapper, since GL has no implicit-layer mechanism) that hooks
   `eglSwapBuffers`/`glXSwapBuffers` and renders ImGui before present. SDR-only.
 - **Shared overlay core** (`src/overlay/`) — backend-agnostic drawing (`overlay_ui`,
-  `state_client`, `gating`, `fade`) behind `IAvatarTextures` + `Extent2D`; linked by BOTH backends.
-- **IPC** (`src/ipc/`) — shared `Snapshot`/`AppearanceConfig` + JSON framing.
-- `tests/`, `packaging/` (install script + PKGBUILD), `docs/superpowers/` (design specs/plans).
+  `state_client`, `gating`, `fade`) behind `IAvatarTextures` + `Extent2D`; linked by BOTH
+  backends, so the panel/toasts are identical in Vulkan and GL.
+- **IPC** (`src/ipc/`) — shared `Snapshot`/`AppearanceConfig` + JSON framing, the XDG path
+  helpers (`paths.hpp`: config, cache, autostart, abstract-socket name), avatar-file
+  decoding, and `emoji.hpp` (splits notification text into text/emoji runs).
+- `tests/`, `packaging/` (install script + PKGBUILD + icons + desktop entry),
+  `docs/specs/` (design specs) + `docs/plans/` (the implementation plans built from them).
+
+The host's icons (`packaging/icons/choir.svg` on a blurple disc, `choir-symbolic.svg` bare)
+are compiled in via `choir.qrc` AND installed to hicolor. The tray glyph is recoloured
+white/black at runtime from `QStyleHints::colorScheme()`. Rendering them needs Qt's SVG
+plugins, so the host links `Qt6::Svg` — without it `QIcon` yields a blank pixmap silently.
 
 Dear ImGui is vendored (`subprojects/`), built **static** into each backend with its own
 renderer backend TU (`imgui_impl_vulkan_unity.cpp` / `imgui_impl_opengl3_unity.cpp`); the
@@ -98,9 +119,12 @@ These are all real LWJGL/Minecraft+Iris failures, in the order they bit us:
 
 ## Debug env vars
 
-`DISABLE_CHOIR_OVERLAY=1` (off for one launch) · `CHOIR_DEBUG_FORMAT=1` (log swapchain
-format/colorspace/transfer/nits) · `CHOIR_HDR_NITS=<80..1000>` · `CHOIR_DEBUG_LAZY_INIT=1` ·
-`CHOIR_DEBUG_AVATARS=1` · `CHOIR_SOCKET=<name>` (abstract-socket override) ·
+`DISABLE_CHOIR_OVERLAY=1` (off for one launch; honoured by BOTH backends) ·
+`CHOIR_DEBUG_FORMAT=1` (log swapchain format/colorspace/transfer/nits) ·
+`CHOIR_HDR_NITS=<80..1000>` · `CHOIR_DEBUG_LAZY_INIT=1` · `CHOIR_DEBUG_AVATARS=1` ·
+`CHOIR_SOCKET=<name>` (abstract-socket override; tests use it for unique names) ·
+`CHOIR_DEBUG_DUMP=<path>` (write the first received snapshot as JSON — golden-test hook) ·
 `CHOIR_FONT=<path.ttf>` (overlay font override; default is the first system DejaVu/Noto/
 Liberation found — see `load_overlay_font`) ·
-`CHOIR_GL_DEBUG=1` (GL interposer: log injection + comm-name + gating decision + per-context init).
+`CHOIR_GL_DEBUG=1` (GL interposer: log injection + comm-name + gating decision + per-context init) ·
+`CHOIR_GL_LIB=<path.so>` (read by the `choir-run` wrapper to override the preloaded lib).
