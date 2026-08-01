@@ -27,9 +27,11 @@ imgui_backends_inc = include_directories('subprojects' / 'imgui-1.92.5' / 'backe
 json_dep  = dependency('nlohmann_json', fallback: ['nlohmann_json', 'nlohmann_json_dep'])
 
 # Qt6 for the host (Task 11). The state server only needs Core + Network
-# (QLocalServer); the tray + settings window add Gui + Widgets.
+# (QLocalServer); the tray + settings window add Gui + Widgets. Svg is linked for
+# its image/icon plugins — our icons are SVG, and without qt6-svg installed QIcon
+# would silently render them blank; linking makes that a build error instead.
 qt6 = import('qt6')
-qt_full_dep = dependency('qt6', modules: ['Core', 'Gui', 'Widgets', 'Network'])
+qt_full_dep = dependency('qt6', modules: ['Core', 'Gui', 'Widgets', 'Network', 'Svg'])
 # Lighter dep for the StateServer unit test (no Widgets/Gui needed there).
 qt_core_net_dep = dependency('qt6', modules: ['Core', 'Network'])
 
@@ -57,9 +59,12 @@ configure_file(
   install_dir: get_option('datadir') / 'vulkan' / 'implicit_layer.d',
 )
 
-# App-menu entry. Exec=choir (resolved on PATH).
+# App-menu entry. Exec=choir (resolved on PATH), Icon=choir → the hicolor SVG below.
 install_data('packaging/choir.desktop',
   install_dir: get_option('datadir') / 'applications')
+
+install_data('packaging/icons/choir.svg',
+  install_dir: get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps')
 
 # choir-run: per-launch LD_PRELOAD injector for OpenGL games. The GL overlay lib has no
 # implicit-loader mechanism (unlike the Vulkan layer), so GL injection is opt-in via this

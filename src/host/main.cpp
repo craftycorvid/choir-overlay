@@ -28,6 +28,7 @@
 #include "model/avatar_cache.hpp"
 #include "model/overlay_state.hpp"
 #include "server/state_server.hpp"
+#include "ui/icons.hpp"
 #include "ui/settings_window.hpp"
 #include "ui/tray.hpp"
 
@@ -61,6 +62,10 @@ int main(int argc, char** argv) {
 
     QApplication app(argc, argv);
     QApplication::setQuitOnLastWindowClosed(false);  // live in the tray
+    // Matches packaging/choir.desktop, so Wayland compositors pair our windows with
+    // the installed desktop entry (app-id → icon, "Choir" in the app switcher).
+    QApplication::setDesktopFileName(QStringLiteral("choir"));
+    QApplication::setWindowIcon(choir::app_icon());
 
     // --- Config + denylist gate ---
     choir::Config config = choir::Config::load(choir::config_path());

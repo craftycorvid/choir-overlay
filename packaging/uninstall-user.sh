@@ -4,7 +4,7 @@
 #   - the implicit-layer manifest
 #   - the installed layer .so + the GL overlay .so (and ~/.local/lib/choir if now empty)
 #   - the choir binary + the choir-run GL launcher
-#   - the autostart entry
+#   - the desktop entry, app icon, and autostart entry
 # Leaves user config/cache (~/.config/choir, ~/.cache/choir) untouched by default;
 # pass --purge to remove those too. Touches nothing outside $HOME.
 #
@@ -32,6 +32,9 @@ INSTALLED_GL_SO="${PREFIX}/lib/choir/libchoir_gl.so"
 INSTALLED_BIN="${PREFIX}/bin/choir"
 INSTALLED_CHOIR_RUN="${PREFIX}/bin/choir-run"
 AUTOSTART_PATH="${XDG_CONFIG_HOME_DIR}/autostart/choir.desktop"
+# Installed by `meson install` (prefix=~/.local), not by install-user.sh itself.
+DESKTOP_PATH="${XDG_DATA_HOME_DIR}/applications/choir.desktop"
+ICON_PATH="${XDG_DATA_HOME_DIR}/icons/hicolor/scalable/apps/choir.svg"
 # meson installs the static ImGui dep alongside (it is linked privately into the
 # layer .so, never dlopen'd); clean up the orphan so uninstall leaves no trace.
 ORPHAN_IMGUI="${PREFIX}/lib/libimgui.a"
@@ -48,6 +51,8 @@ rm_if "${INSTALLED_GL_SO}" "gl overlay .so"
 rm_if "${INSTALLED_BIN}" "host binary"
 rm_if "${INSTALLED_CHOIR_RUN}" "gl launcher"
 rm_if "${AUTOSTART_PATH}" "autostart entry"
+rm_if "${DESKTOP_PATH}" "desktop entry"
+rm_if "${ICON_PATH}" "app icon"
 rm_if "${ORPHAN_IMGUI}" "bundled static imgui"
 
 # Remove the now-empty ~/.local/lib/choir dir.

@@ -1,0 +1,7 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+  <qresource prefix="/choir">
+    <file>choir.svg</file>
+    <file>choir-symbolic.svg</file>
+  </qresource>
+</RCC>

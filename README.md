@@ -21,7 +21,7 @@ is designed never to crash the game.
   native Vulkan or DXVK/VKD3D (Proton) titles. SDR and HDR (scRGB / HDR10) are both
   supported.
 - The **Discord desktop client** running (the official client, or anything that exposes the local `discord-ipc-*` socket).
-- **Qt6** (Core, Gui, Widgets, Network) for the host.
+- **Qt6** (Core, Gui, Widgets, Network, Svg) for the host.
 - 64-bit (`x86_64`).
 
 ## Install

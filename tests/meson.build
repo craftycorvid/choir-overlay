@@ -129,6 +129,19 @@ test('state_server',
   ),
 )
 
+# Icons test: rasterizes the qrc SVGs, so it needs QtGui + the same rcc output the
+# host links (compiled straight into the exe, so the resource self-registers).
+test('icons',
+  executable('t_icons',
+    'host/test_icons.cpp',
+    files('../src/host/ui/icons.cpp'),
+    host_icons_qrc,
+    include_directories: [host_inc],
+    dependencies: [qt_full_dep],
+  ),
+  env: {'QT_QPA_PLATFORM': 'offscreen'},
+)
+
 # M0 auth spike (Task 7 gate): an interactive, manually-run binary that streams
 # live voice events from a real Discord client. Built (so it's ready to run) but
 # NOT registered as a test — it needs a real Discord client + human OAuth consent.

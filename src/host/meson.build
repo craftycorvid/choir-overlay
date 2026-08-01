@@ -45,14 +45,22 @@ host_qt_moc = qt6.preprocess(
 host_qt_sources = files(
   'server/state_server.cpp',
   'discord/qt_http.cpp',
+  'ui/icons.cpp',
   'ui/tray.cpp',
   'ui/settings_window.cpp',
+)
+
+# Icons compiled in (rcc), so they resolve in the build tree too — the same SVGs
+# the top-level meson.build installs into the hicolor theme.
+host_icons_qrc = qt6.preprocess(
+  qresources: files('..' / '..' / 'packaging' / 'icons' / 'choir.qrc'),
 )
 
 executable('choir',
   'main.cpp',
   host_qt_sources,
   host_qt_moc,
+  host_icons_qrc,
   include_directories: [ipc_inc, host_inc],
   link_with: [libchoir_ipc, libchoir_host_core],
   dependencies: [json_dep, qt_full_dep],

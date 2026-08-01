@@ -1,31 +1,14 @@
 #include "ui/tray.hpp"
 
 #include <QAction>
-#include <QColor>
-#include <QIcon>
+#include <QGuiApplication>
 #include <QMenu>
-#include <QPainter>
-#include <QPixmap>
+#include <QStyleHints>
 #include <QSystemTrayIcon>
 
+#include "ui/icons.hpp"
+
 namespace choir {
-
-namespace {
-
-// A simple generated icon (a filled circle) so we don't ship an asset file.
-QIcon make_placeholder_icon() {
-    QPixmap pm(64, 64);
-    pm.fill(Qt::transparent);
-    QPainter painter(&pm);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setBrush(QColor(88, 101, 242));  // a friendly blurple-ish fill
-    painter.setPen(Qt::NoPen);
-    painter.drawEllipse(8, 8, 48, 48);
-    painter.end();
-    return QIcon(pm);
-}
-
-}  // namespace
 
 Tray::Tray(QObject* parent) : QObject(parent) {
     menu_ = new QMenu();
@@ -39,9 +22,14 @@ Tray::Tray(QObject* parent) : QObject(parent) {
     connect(reconnect, &QAction::triggered, this, &Tray::reconnect_requested);
     connect(quit, &QAction::triggered, this, &Tray::quit_requested);
 
-    icon_ = new QSystemTrayIcon(make_placeholder_icon(), this);
+    QStyleHints* hints = QGuiApplication::styleHints();
+    icon_ = new QSystemTrayIcon(tray_icon(hints->colorScheme()), this);
     icon_->setToolTip(QStringLiteral("Choir — overlay for Discord"));
     icon_->setContextMenu(menu_);
+
+    // Follow the DE flipping between light and dark mode.
+    connect(hints, &QStyleHints::colorSchemeChanged, this,
+            [this](Qt::ColorScheme scheme) { icon_->setIcon(tray_icon(scheme)); });
 
     // Left-clicking the tray icon opens settings too.
     connect(icon_, &QSystemTrayIcon::activated,
