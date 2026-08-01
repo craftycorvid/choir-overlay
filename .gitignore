@@ -19,12 +19,13 @@ compile_commands.json
 /packaging/*.pkg.tar.zst
 /packaging/*.log
 
-# AUR package (packaging/aur/PKGBUILD): keep PKGBUILD + .SRCINFO, ignore makepkg's
-# build dirs, the $pkgname git clone, downloaded wrap sources, and built packages.
-/packaging/aur/pkg/
-/packaging/aur/src/
-/packaging/aur/choir-overlay-git/
-/packaging/aur/*.pkg.tar.zst
-/packaging/aur/*.tar.gz
-/packaging/aur/*.zip
-/packaging/aur/*.log
+# AUR packages (packaging/aur/git = choir-overlay-git, packaging/aur/stable =
+# choir-overlay): keep PKGBUILD + .SRCINFO, ignore makepkg's build dirs, the $pkgname git
+# clone, downloaded wrap sources, and built packages.
+/packaging/aur/*/pkg/
+/packaging/aur/*/src/
+/packaging/aur/git/choir-overlay-git/
+/packaging/aur/*/*.pkg.tar.zst
+/packaging/aur/*/*.tar.gz
+/packaging/aur/*/*.zip
+/packaging/aur/*/*.log
