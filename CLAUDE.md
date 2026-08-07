@@ -28,9 +28,11 @@ VERIFY_LEVEL=tdd
   `gh release create` (source-only — GitHub attaches the tarball itself).
 - AUR (two packages; `packaging/aur/{git,stable}/` are the source of truth, the AUR repos are
   separate git remotes). Edit the PKGBUILD, then in that dir:
-  `makepkg --printsrcinfo > .SRCINFO && makepkg -f` (always build before publishing), copy both
-  files into a clone of `ssh://aur@aur.archlinux.org/<pkgname>.git`, commit, push.
-  `stable/` needs the new tarball's `sha256sum` after the GitHub release exists.
+  `makepkg --printsrcinfo > .SRCINFO && makepkg -f` (always build before publishing), then
+  `bash packaging/aur/publish.sh [git|stable|both]` — it clones each AUR repo into a temp
+  dir, copies both files, commits and pushes (creating the package on first import), and
+  refuses to publish a `.SRCINFO` that disagrees with its PKGBUILD. Keeps no state, so it is
+  safe to re-run. `stable/` needs the new tarball's `sha256sum` after the GitHub release exists.
 - Confirm the layer loads: `vulkaninfo | grep -i choir`; for GL, `CHOIR_GL_DEBUG=1 choir-run <game>`
 
 ## Architecture
