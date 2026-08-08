@@ -121,6 +121,21 @@ jobs:
           test -f AppDir/usr/lib/choir/libchoir_overlay.so
           test -f AppDir/usr/lib/choir/libchoir_gl.so
 
+          # linuxdeploy-plugin-qt does not deploy these, but src/host/ui/icons.cpp builds
+          # every icon with QIcon(":/…svg") — the path form, which resolves through the SVG
+          # ICON ENGINE, not the imageformats plugin the Qt plugin does bundle. Without it
+          # the app and tray icons are silently blank, exactly the failure CLAUDE.md warns
+          # about. Pre-placing them means linuxdeploy treats them as AppDir content and
+          # patches their rpath with everything else (it already does this to our payload).
+          for d in iconengines wayland-graphics-integration-client; do
+            if [ -d "$QT_ROOT/plugins/$d" ]; then
+              mkdir -p "AppDir/usr/plugins/$d"
+              cp -v "$QT_ROOT/plugins/$d"/*.so "AppDir/usr/plugins/$d/"
+            else
+              echo "note: $QT_ROOT/plugins/$d not present in this Qt build"
+            fi
+          done
+
       - name: Build the AppImage
         run: |
           # No FUSE in a CI container: make every nested AppImage self-extract instead.
@@ -141,10 +156,10 @@ jobs:
 
           # Wayland is the target and only tested session, and linuxdeploy-plugin-qt
           # bundles only the xcb platform plugin unless told otherwise — without these
-          # the host falls back to XWayland. iconengines/imageformats carry the SVG
-          # plugin, without which QIcon silently yields blank pixmaps.
+          # the host falls back to XWayland. (The SVG icon engine is NOT deployable this
+          # way; it is copied into the AppDir during staging instead.)
           export EXTRA_PLATFORM_PLUGINS="libqwayland-generic.so;libqwayland-egl.so"
-          export EXTRA_QT_PLUGINS="wayland-decoration-client;wayland-graphics-integration-client;wayland-shell-integration;iconengines;imageformats"
+          export EXTRA_QT_PLUGINS="wayland-decoration-client;wayland-shell-integration"
 
           ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
@@ -185,10 +200,32 @@ jobs:
           echo "layer exports: $exports"
           test "$exports" -eq 3
 
+          # What actually ended up bundled, as opposed to what we asked for. Every one of
+          # these fails silently on a user's machine: no Wayland plugin and the host drops
+          # to XWayland, no SVG icon engine and every icon is blank.
+          missing=0
+          for p in platforms/libqwayland-generic.so platforms/libqwayland-egl.so \
+                   platforms/libqxcb.so imageformats/libqsvg.so \
+                   iconengines/libqsvgicon.so; do
+            if [ -f "AppDir/usr/plugins/$p" ]; then
+              echo "ok      $p"
+            else
+              echo "MISSING $p"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "--- bundled plugins ---"
+            find AppDir/usr/plugins -name '*.so' | sort
+            exit 1
+          fi
+
+      # Narrowly Choir-*: a bare *.AppImage glob also matches the downloaded linuxdeploy
+      # tools, which would otherwise get attached to the GitHub release.
       - uses: actions/upload-artifact@v4
         with:
           name: appimage
-          path: ./*.AppImage
+          path: ./Choir-*-x86_64.AppImage
           if-no-files-found: error
 
   # Separate job on the runner itself (not the container) so the preinstalled gh CLI is
@@ -213,4 +250,4 @@ jobs:
         run: |
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
             || gh release create "$GITHUB_REF_NAME" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" ./*.AppImage --clobber
+          gh release upload "$GITHUB_REF_NAME" ./Choir-*-x86_64.AppImage --clobber
