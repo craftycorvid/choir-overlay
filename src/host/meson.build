@@ -18,6 +18,7 @@ host_core_sources = files(
   'config/config.cpp',
   'config/denylist.cpp',
   'config/autostart.cpp',
+  'config/backends.cpp',
 )
 
 libchoir_host_core = static_library('choir_host_core',

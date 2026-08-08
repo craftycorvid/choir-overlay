@@ -1,1 +1,3 @@
 option('build_tests', type: 'boolean', value: false)
+option('static_backend_cxx', type: 'boolean', value: false,
+  description: 'Statically link libstdc++/libgcc into the injected backends (AppImage builds)')

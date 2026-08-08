@@ -7,6 +7,10 @@
 //     checkbox, toast anchor + duration
 //   - denylist editor (one glob per line)
 //   - start-on-login checkbox (an XDG autostart entry, NOT part of Config)
+//   - overlay-libraries status + install button, shown ONLY under an AppImage, which
+//     has to place the injected .so files in ~/.local before any game can load them
+//     (see config/backends.hpp). This is also the way back for someone who declined
+//     the first-run prompt, since that answer is remembered.
 //
 // Saving persists to config_path() and emits config_changed(Config) so main()
 // can push the new appearance into OverlayState and rebuild the Denylist.
@@ -24,6 +28,8 @@ class QCheckBox;
 class QSpinBox;
 class QPlainTextEdit;
 class QShowEvent;
+class QLabel;
+class QPushButton;
 QT_END_NAMESPACE
 
 namespace choir {
@@ -45,11 +51,17 @@ protected:
 
 private slots:
     void on_save_clicked();
+    void on_install_backends_clicked();
 
 private:
     void build_ui();
     void load_into_widgets();
     Config gather_from_widgets() const;
+
+    // Re-reads whether the AppImage payload is installed in ~/.local and updates the
+    // status label + button. No-op when not running from an AppImage (the row is
+    // never built, so backend_status_ stays null).
+    void refresh_backend_row();
 
     Config cfg_;
 
@@ -61,6 +73,10 @@ private:
     QSpinBox* toast_duration_ = nullptr;
 
     QCheckBox* autostart_ = nullptr;
+
+    // AppImage installs only; null otherwise (see config/backends.hpp).
+    QLabel* backend_status_ = nullptr;
+    QPushButton* backend_install_ = nullptr;
 
     QPlainTextEdit* denylist_ = nullptr;
 };

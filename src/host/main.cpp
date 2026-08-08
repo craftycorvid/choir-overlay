@@ -19,6 +19,7 @@
 //
 // The app lives in the tray; no main window is shown by default.
 
+#include "config/backends.hpp"
 #include "config/config.hpp"
 #include "config/denylist.hpp"
 #include "discord/qt_http.hpp"
@@ -33,6 +34,8 @@
 #include "ui/tray.hpp"
 
 #include <QApplication>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QTimer>
 
 #include <cstdio>
@@ -47,6 +50,58 @@ choir::RpcConfig make_rpc_config(const choir::Config& cfg) {
     rc.client_id = cfg.client_id;
     // scopes left at RpcConfig defaults.
     return rc;
+}
+
+// Keep the injected backends in ~/.local in step with the AppImage's payload.
+//
+// An AppImage carries libchoir_overlay.so + libchoir_gl.so but cannot host them: games
+// load them by absolute path long after /tmp/.mount_XXXXXX is gone. So they are copied
+// out. That writes outside the image, which a portable app shouldn't do unasked — so we
+// ask once, remember the answer, and re-sync silently forever after (which also means a
+// newer AppImage can never pair with stale libraries).
+//
+// Entirely a no-op for source/pacman installs: $APPDIR is unset, so the payload dir is
+// empty and we return before touching anything.
+void sync_appimage_backends(choir::Config& config) {
+    const std::string payload = choir::appimage_payload_dir();
+    if (payload.empty()) return;
+    if (choir::backends_up_to_date(payload, choir::backend_lib_dir())) return;
+
+    if (config.backend_consent == choir::Config::kBackendUnasked) {
+        QMessageBox box;
+        box.setIcon(QMessageBox::Question);
+        box.setWindowTitle(QStringLiteral("Choir"));
+        box.setText(QStringLiteral("Install Choir's overlay libraries to ~/.local?"));
+        box.setInformativeText(QStringLiteral(
+            "Games load the overlay from a fixed path on disk, which this AppImage cannot "
+            "provide — its contents exist only while Choir is running. Choir needs to copy "
+            "two small libraries to ~/.local/lib/choir and register the Vulkan layer in "
+            "~/.local/share.\n\n"
+            "Without them the tray and settings still work, but no overlay appears in "
+            "games. You can do this later from the settings window."));
+        QPushButton* install =
+            box.addButton(QStringLiteral("Install"), QMessageBox::AcceptRole);
+        box.addButton(QStringLiteral("Not now"), QMessageBox::RejectRole);
+        box.setDefaultButton(install);
+        box.exec();
+
+        config.backend_consent = (box.clickedButton() == install)
+                                     ? choir::Config::kBackendGranted
+                                     : choir::Config::kBackendDeclined;
+        config.save(choir::config_path());
+    }
+
+    if (config.backend_consent != choir::Config::kBackendGranted) return;
+
+    if (!choir::install_backends(payload)) {
+        std::fprintf(stderr, "choir: failed to install overlay libraries into %s\n",
+                     choir::backend_lib_dir().c_str());
+        QMessageBox::warning(
+            nullptr, QStringLiteral("Choir"),
+            QStringLiteral("Could not write the overlay libraries to ~/.local.\n\n"
+                           "Check that the filesystem is writable and has free space; "
+                           "Choir itself will keep running without an in-game overlay."));
+    }
 }
 
 }  // namespace
@@ -69,6 +124,10 @@ int main(int argc, char** argv) {
 
     // --- Config + denylist gate ---
     choir::Config config = choir::Config::load(choir::config_path());
+
+    // Before anything else: under an AppImage the overlay backends have to be on the
+    // real filesystem or no game can load them (no-op otherwise).
+    sync_appimage_backends(config);
 
     // A shared denylist behind a pointer so SettingsWindow can swap it at runtime.
     auto denylist = std::make_shared<choir::Denylist>(config.denylist);

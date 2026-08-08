@@ -19,7 +19,23 @@ It works in **Vulkan** games (native, and Windows games through Proton/DXVK/VKD3
 yay -S choir-overlay-git      # or: paru -S choir-overlay-git
 ```
 
-**Any distro, no root** — installs under `$HOME`:
+**Any distro — AppImage.** Download `Choir-<version>-x86_64.AppImage` from the
+[latest release](https://github.com/craftycorvid/choir-overlay/releases/latest):
+
+```sh
+chmod +x Choir-*-x86_64.AppImage
+./Choir-*-x86_64.AppImage
+```
+
+The first launch asks permission to install Choir's overlay libraries to `~/.local`, and
+you should say yes: games load the overlay from a fixed path on disk, which an AppImage
+can't provide — its contents only exist while Choir is running. Decline and the tray and
+settings still work, but no overlay appears in games; you can install them later from the
+settings window. After that, a newer AppImage keeps them in sync on its own.
+
+Requires glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+, current Fedora, SteamOS).
+
+**Any distro, from source** — installs under `$HOME`, no root:
 
 ```sh
 bash packaging/install-user.sh

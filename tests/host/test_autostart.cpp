@@ -11,6 +11,7 @@
 #include "config/autostart.hpp"
 
 #include <cassert>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -105,6 +106,22 @@ void test_rewrite_truncates(const fs::path& tmp) {
     assert(text.find("/old/choir") == std::string::npos);
 }
 
+// An autostart entry naming the AppImage's own mount point is dead by the next login,
+// because /tmp/.mount_XXXXXX only exists while the host runs.
+void test_exec_path_prefers_appimage() {
+    ::unsetenv("APPIMAGE");
+    assert(host_exec_path("/usr/bin/choir") == "/usr/bin/choir");
+
+    ::setenv("APPIMAGE", "/home/u/Apps/Choir-1.0.0-x86_64.AppImage", 1);
+    assert(host_exec_path("/tmp/.mount_Choir1234/usr/bin/choir") ==
+           "/home/u/Apps/Choir-1.0.0-x86_64.AppImage");
+
+    // An empty value is as good as unset — don't write Exec= with nothing after it.
+    ::setenv("APPIMAGE", "", 1);
+    assert(host_exec_path("/usr/bin/choir") == "/usr/bin/choir");
+    ::unsetenv("APPIMAGE");
+}
+
 }  // namespace
 
 int main() {
@@ -118,6 +135,7 @@ int main() {
     test_exec_with_spaces_is_quoted(tmp);
     test_disabled_in_place_reads_as_off(tmp);
     test_rewrite_truncates(tmp);
+    test_exec_path_prefers_appimage();
 
     fs::remove_all(tmp);
     return 0;

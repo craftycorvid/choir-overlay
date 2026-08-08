@@ -24,6 +24,13 @@ VERIFY_LEVEL=tdd
     process → **relaunch the game** to pick them up. Host-only changes just need `choir`
     restarted.
 - Pacman package: `cd packaging && makepkg -si` (uses `-Dbuild_tests=false`)
+- AppImage (cross-distro): built by `.github/workflows/appimage.yml` on a `v*` tag or
+  manual dispatch — never locally. Only the **host** is bundled; the two backends ride
+  along as payload at `usr/lib/choir` and the host copies them to `~/.local` on first run
+  (`src/host/config/backends.cpp`), because nothing can be dlopened out of an AppImage
+  mount that exists only while the host runs. The workflow deletes meson's layer manifest
+  and `choir-run` from the AppDir — both bake the `/usr` prefix, and the host regenerates
+  them against `~/.local`. See "Cross-distro packaging" below.
 - Release: bump `version:` in `meson.build` + `pkgver` in `packaging/PKGBUILD`, tag `vX.Y.Z`,
   `gh release create` (source-only — GitHub attaches the tarball itself).
 - AUR (two packages; `packaging/aur/{git,stable}/` are the source of truth, the AUR repos are
@@ -53,8 +60,9 @@ reaches inside Steam pressure-vessel containers):
   `state_client`, `gating`, `fade`) behind `IAvatarTextures` + `Extent2D`; linked by BOTH
   backends, so the panel/toasts are identical in Vulkan and GL.
 - **IPC** (`src/ipc/`) — shared `Snapshot`/`AppearanceConfig` + JSON framing, the XDG path
-  helpers (`paths.hpp`: config, cache, autostart, abstract-socket name), avatar-file
-  decoding, and `emoji.hpp` (splits notification text into text/emoji runs).
+  helpers (`paths.hpp`: config, cache, autostart, data home, Vulkan manifest,
+  abstract-socket name), avatar-file decoding, and `emoji.hpp` (splits notification text
+  into text/emoji runs).
 - `tests/`, `packaging/` (install script + PKGBUILD + icons + desktop entry),
   `docs/specs/` (design specs) + `docs/plans/` (the implementation plans built from them).
 
@@ -69,6 +77,32 @@ committed, so a fresh clone downloads on first `meson setup`; both PKGBUILDs pre
 backend with its own
 renderer backend TU (`imgui_impl_vulkan_unity.cpp` / `imgui_impl_opengl3_unity.cpp`); the
 Vulkan layer feeds ImGui function pointers via its own dispatch, never the global loader.
+
+## Cross-distro packaging (why AppImage and not Flatpak)
+
+The constraint that decides everything: **the injected backends cannot live inside a
+bundle.** The Vulkan loader reads `library_path` from the manifest inside a *game*
+process, and `choir-run` `LD_PRELOAD`s a path into a game — both long after an AppImage's
+`/tmp/.mount_XXXXXX` is unmounted. So the `.so` files must sit on the real filesystem.
+
+That costs almost nothing here, because only the host is heavy. The backends link
+`libstdc++ libgcc_s libm libc` and nothing else (ImGui static, Vulkan via the layer's own
+dispatch, EGL/GLX via `dlsym`); `-Dstatic_backend_cxx=true` drops that to `libm libc`.
+The host links ~70 libraries including Qt6, and **must** be bundled regardless — it needs
+`QStyleHints::colorScheme()` (Qt 6.5+) and Ubuntu 24.04 LTS ships Qt 6.4.
+
+- `static_backend_cxx` applies **only to the two `shared_library` targets**, never the
+  host: a statically-linked libstdc++ in the host would coexist with the one Qt6 links
+  dynamically, putting two C++ runtimes either side of every Qt call. Off by default so
+  the AUR/pacman packages keep linking the system C++ runtime.
+- Verify after touching it: `ldd` shows only `libm`/`libc`, and `nm -CD` still shows
+  exactly the 3 Vulkan entrypoints for the layer and **unversioned** hooks for GL (the
+  version scripts do the hiding; static linking must not leak past them).
+- **Flatpak can't do this**, and not because of the sandbox — the copied-out `.so` would
+  inherit the *runtime's* glibc (`org.kde.Platform//6.8` = 2.40, `//25.08` = 2.42), a
+  floor you don't control and that rises at every runtime bump. Flathub would also reject
+  an app registering a GLOBAL Vulkan layer, and `XDG_DATA_HOME` redirection would force a
+  sandbox special-case into `paths.hpp` — code both backends link. Don't revisit this.
 
 ## Layer gotchas (hard-won — read before touching `src/layer/`)
 

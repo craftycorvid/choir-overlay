@@ -1,0 +1,145 @@
+# Build the cross-distro AppImage.
+#
+# Only the HOST needs bundling. The two injected backends depend on nothing but libc
+# and libm (ImGui is static, Vulkan goes through the layer's own dispatch, EGL/GLX
+# through dlsym, and -Dstatic_backend_cxx=true removes libstdc++), so they ride along
+# as plain payload and the host copies them to ~/.local on first run — neither can be
+# loaded from inside the image, whose mount only exists while Choir is running.
+#
+# The container pins the glibc floor at 2.39 (ubuntu:24.04), covering Ubuntu 24.04+,
+# Debian 13+, current Fedora, Leap 16 and SteamOS. Steam adds no separate constraint:
+# pressure-vessel promotes the host's glibc into its sniper containers. Building on an
+# older image is a one-line change here if that floor ever needs to drop — nothing in
+# the tree needs GCC 13, and the layer's Vulkan surface is only
+# VK_EXT_swapchain_colorspace plus core swapchain types.
+
+name: AppImage
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    steps:
+      # Before checkout: the container is bare, and actions/checkout wants git.
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential ninja-build pkg-config git curl ca-certificates file \
+            python3-pip desktop-file-utils libfuse2t64 \
+            libvulkan-dev libgl1-mesa-dev libegl1-mesa-dev \
+            libxkbcommon-dev libfontconfig1-dev
+
+      - uses: actions/checkout@v4
+
+      # PEP 668 marks the system Python as externally managed; this container is
+      # throwaway, so install straight into it rather than standing up a venv.
+      - name: Install meson + aqtinstall
+        run: pip3 install --break-system-packages meson aqtinstall
+
+      # Ubuntu 24.04 ships Qt 6.4, but src/host/ui/tray.cpp needs QStyleHints::colorScheme()
+      # (6.5+) — which is also exactly why the host has to be bundled at all. qtwayland is
+      # required, not optional: it is where the Wayland platform plugins come from, and
+      # Wayland is Choir's target session. Resolve the latest 6.8 LTS patch rather than
+      # pinning one that may not exist.
+      - name: Install Qt
+        run: |
+          QT_VER=$(aqt list-qt linux desktop --spec "6.8" --latest-version)
+          echo "Using Qt $QT_VER"
+          aqt install-qt linux desktop "$QT_VER" linux_gcc_64 -m qtsvg qtwayland -O /opt/qt
+          echo "QT_ROOT=/opt/qt/$QT_VER/gcc_64" >> "$GITHUB_ENV"
+          echo "/opt/qt/$QT_VER/gcc_64/bin" >> "$GITHUB_PATH"
+
+      - name: Configure and build
+        run: |
+          meson setup build . --buildtype=release --prefix=/usr \
+            -Dbuild_tests=false -Dstatic_backend_cxx=true
+          meson compile -C build
+
+      - name: Stage the AppDir
+        run: |
+          meson install -C build --destdir "$PWD/AppDir"
+
+          # Both of these bake the meson prefix into their contents — an absolute
+          # /usr/lib/choir library_path in the layer manifest, and the same path inside
+          # choir-run. Neither is right for an AppImage, and the host regenerates both
+          # against ~/.local when it installs the payload (src/host/config/backends.cpp).
+          # The .so files under AppDir/usr/lib/choir stay: they ARE the payload.
+          rm -rf AppDir/usr/share/vulkan
+          rm -f AppDir/usr/bin/choir-run
+
+          # The imgui wrap installs its build-time static lib; useless at runtime and
+          # 2.6 MB of it. Both PKGBUILDs drop it for the same reason.
+          rm -f AppDir/usr/lib/libimgui.a
+
+          test -f AppDir/usr/lib/choir/libchoir_overlay.so
+          test -f AppDir/usr/lib/choir/libchoir_gl.so
+
+      - name: Build the AppImage
+        run: |
+          # No FUSE in a CI container: make every nested AppImage self-extract instead.
+          export APPIMAGE_EXTRACT_AND_RUN=1
+
+          curl -fsSLO https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -fsSLO https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
+
+          # Version from meson.build, the same source of truth the PKGBUILDs track, so
+          # this works for a manual workflow_dispatch run as well as a tag push.
+          VERSION=$(meson introspect build --projectinfo \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
+          export VERSION
+
+          export QMAKE="$QT_ROOT/bin/qmake6"
+          export LD_LIBRARY_PATH="$QT_ROOT/lib:${LD_LIBRARY_PATH:-}"
+
+          # Wayland is the target and only tested session, and linuxdeploy-plugin-qt
+          # bundles only the xcb platform plugin unless told otherwise — without these
+          # the host falls back to XWayland. iconengines/imageformats carry the SVG
+          # plugin, without which QIcon silently yields blank pixmaps.
+          export EXTRA_PLATFORM_PLUGINS="libqwayland-generic.so;libqwayland-egl.so"
+          export EXTRA_QT_PLUGINS="wayland-decoration-client;wayland-graphics-integration-client;wayland-shell-integration;iconengines;imageformats"
+
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            --desktop-file AppDir/usr/share/applications/choir.desktop \
+            --icon-file AppDir/usr/share/icons/hicolor/scalable/apps/choir.svg \
+            --plugin qt \
+            --output appimage
+
+          ls -la ./*.AppImage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: ./*.AppImage
+          if-no-files-found: error
+
+  # Separate job on the runner itself (not the container) so the preinstalled gh CLI is
+  # available — the same `gh release` flow the release notes in CLAUDE.md describe.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: appimage
+
+      # Tolerates either order: the release may already exist from a manual
+      # `gh release create`, or this may be the first thing to make it. --clobber keeps
+      # re-runs idempotent, like packaging/aur/publish.sh.
+      - name: Attach the AppImage to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" ./*.AppImage --clobber

@@ -31,7 +31,7 @@ libchoir_gl = shared_library('choir_gl',
   link_args: [
     '-Wl,--version-script=@0@'.format(gl_version_script),
     '-Wl,--exclude-libs,ALL',
-  ],
+  ] + backend_static_cxx_args,
   link_depends: gl_version_script,
   install: true,
   install_dir: get_option('libdir') / 'choir',   # beside libchoir_overlay.so

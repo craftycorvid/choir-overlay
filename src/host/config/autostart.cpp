@@ -1,6 +1,7 @@
 #include "config/autostart.hpp"
 
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -42,6 +43,12 @@ bool key_is_true(const std::string& line, const std::string& key) {
 }
 
 }  // namespace
+
+std::string host_exec_path(const std::string& app_path) {
+    const char* appimage = std::getenv("APPIMAGE");
+    if (appimage && appimage[0] != '\0') return std::string(appimage);
+    return app_path;
+}
 
 bool autostart_enabled(const std::string& path) {
     std::ifstream in(path);

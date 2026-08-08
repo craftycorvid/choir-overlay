@@ -32,6 +32,15 @@ struct Config {
     // Glob patterns; if empty after parse, load() populates the defaults.
     std::vector<std::string> denylist;
 
+    // --- AppImage backend install (see config/backends.hpp) ---
+    // An AppImage has to copy the two injected .so files out to ~/.local before any
+    // game can load them, i.e. write outside the image, so we ask once and remember
+    // the answer. Never consulted for source/pacman installs, where nothing asks.
+    static constexpr int kBackendUnasked = 0;
+    static constexpr int kBackendGranted = 1;
+    static constexpr int kBackendDeclined = 2;
+    int backend_consent = kBackendUnasked;
+
     // Returns defaults (incl. the default denylist) if the file is
     // absent/unreadable/corrupt. Never throws.
     static Config load(const std::string& path);

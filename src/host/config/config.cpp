@@ -89,6 +89,15 @@ Config Config::load(const std::string& path) {
         c.refresh_token = j["refresh_token"].get<std::string>();
     }
 
+    // Out-of-range values (a hand-edited or future config) fall back to "unasked",
+    // which re-prompts rather than silently installing or silently doing nothing.
+    if (j.contains("backend_consent") && j["backend_consent"].is_number_integer()) {
+        const int v = j["backend_consent"].get<int>();
+        if (v >= Config::kBackendUnasked && v <= Config::kBackendDeclined) {
+            c.backend_consent = v;
+        }
+    }
+
     if (j.contains("denylist") && j["denylist"].is_array()) {
         std::vector<std::string> dl;
         for (const auto& el : j["denylist"]) {
@@ -113,6 +122,7 @@ bool Config::save(const std::string& path) const {
     j["access_token"] = access_token;
     j["refresh_token"] = refresh_token;
     j["denylist"] = denylist;
+    j["backend_consent"] = backend_consent;
 
     const std::string text = j.dump(2);
 

@@ -70,7 +70,7 @@ libchoir_overlay = shared_library('choir_overlay',
   link_args: [
     '-Wl,--version-script=@0@'.format(layer_version_script),
     '-Wl,--exclude-libs,ALL',
-  ],
+  ] + backend_static_cxx_args,
   link_depends: layer_version_script,  # relink when the export list changes
   install: true,
   install_dir: get_option('libdir') / 'choir',  # per-user-friendly: <prefix>/lib/choir

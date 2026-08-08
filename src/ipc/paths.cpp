@@ -59,4 +59,13 @@ std::string autostart_path() {
     return config_home() + "/autostart/choir.desktop";
 }
 
+std::string data_home() {
+    std::string home = env_or("HOME", "");
+    return env_or("XDG_DATA_HOME", home + "/.local/share");
+}
+
+std::string vulkan_manifest_path() {
+    return data_home() + "/vulkan/implicit_layer.d/choir_overlay.x86_64.json";
+}
+
 } // namespace choir

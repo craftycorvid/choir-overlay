@@ -118,6 +118,15 @@ test('autostart',
   ),
 )
 
+test('backends',
+  executable('t_backends',
+    'host/test_backends.cpp',
+    link_with: [libchoir_ipc, libchoir_host_core],
+    include_directories: [ipc_inc, host_inc],
+    dependencies: [json_dep],
+  ),
+)
+
 test('denylist',
   executable('t_denylist',
     'host/test_denylist.cpp',

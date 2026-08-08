@@ -10,6 +10,13 @@ std::string avatar_cache_dir();    // cache_home()/choir/avatars
 std::string config_home();         // $XDG_CONFIG_HOME or $HOME/.config
 std::string config_path();         // config_home()/choir/config.json
 std::string autostart_path();      // config_home()/autostart/choir.desktop (XDG autostart)
+std::string data_home();           // $XDG_DATA_HOME or $HOME/.local/share
+
+// data_home()/vulkan/implicit_layer.d/choir_overlay.x86_64.json — where the Vulkan
+// loader looks for a per-user implicit layer. Written by the AppImage build of the
+// host (see host/config/backends.hpp); for source/pacman installs meson writes the
+// equivalent file under its own prefix instead.
+std::string vulkan_manifest_path();
 
 // The host<->layer IPC uses an ABSTRACT-namespace unix socket (not a filesystem
 // path) so it crosses Steam's pressure-vessel container boundary: filesystem

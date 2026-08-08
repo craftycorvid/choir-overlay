@@ -35,6 +35,24 @@ qt_full_dep = dependency('qt6', modules: ['Core', 'Gui', 'Widgets', 'Network', '
 # Lighter dep for the StateServer unit test (no Widgets/Gui needed there).
 qt_core_net_dep = dependency('qt6', modules: ['Core', 'Network'])
 
+# Statically link the C++ runtime into the two INJECTED backends (never the host).
+#
+# For the AppImage build those .so files are copied out to ~/.local and dlopened into
+# arbitrary game processes on whatever distro the user runs, which may ship an older
+# libstdc++ than the build machine. Static linking removes that variable; the version
+# script + --exclude-libs,ALL already keep the pulled-in symbols out of the dynamic
+# table, so nothing new is exported.
+#
+# Deliberately NOT applied to the Qt host: its libstdc++ would then coexist with the
+# one Qt6 links dynamically, putting two C++ runtimes on either side of every Qt call.
+# The AppImage bundles libstdc++ for the host in the normal way instead.
+#
+# Off by default, so the AUR/pacman packages keep linking the system C++ runtime.
+backend_static_cxx_args = []
+if get_option('static_backend_cxx')
+  backend_static_cxx_args = ['-static-libstdc++', '-static-libgcc']
+endif
+
 subdir('src/ipc')
 subdir('src/host')
 subdir('src/overlay')
