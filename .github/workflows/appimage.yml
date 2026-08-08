@@ -156,10 +156,17 @@ jobs:
           ls -la ./*.AppImage
 
       # linuxdeploy walks the AppDir and patchelfs what it finds, so confirm it left the
-      # payload alone: still in place for appimage_payload_dir(), still needing nothing
-      # but the C runtime (it gets dlopened into arbitrary games, where a stray
-      # dependency on a bundled Qt library would be unresolvable), and still exporting
-      # only the three Vulkan loader entrypoints the version script allows.
+      # payload usable: still where appimage_payload_dir() looks, still depending on
+      # nothing but the C runtime, and still exporting only the three Vulkan loader
+      # entrypoints the version script allows.
+      #
+      # The payload is dlopened into arbitrary games, so a dependency on a bundled Qt
+      # library would be unresolvable there — that is what this guards against.
+      # ld-linux is not such a dependency: -static-libstdc++ emits that NEEDED entry in
+      # a plain local build too, and the interpreter is mapped into every process
+      # regardless. linuxdeploy also stamps RUNPATH=$ORIGIN, which is inert here (the
+      # only deps resolve from the system paths) and goes stale once the host copies the
+      # library to ~/.local anyway.
       - name: Verify the payload survived bundling
         run: |
           for lib in libchoir_overlay.so libchoir_gl.so; do
@@ -167,8 +174,10 @@ jobs:
             test -f "$path" || { echo "payload missing: $path"; ls -R AppDir/usr/lib | head -40; exit 1; }
             echo "--- $lib ---"
             readelf -d "$path" | grep -E 'NEEDED|RUNPATH|RPATH' || true
-            if readelf -d "$path" | grep NEEDED | grep -qvE 'libc\.so|libm\.so'; then
-              echo "unexpected dependency in $lib"; exit 1
+            if readelf -d "$path" | grep NEEDED \
+                 | grep -qvE 'libc\.so|libm\.so|ld-linux-x86-64\.so'; then
+              echo "unexpected dependency in $lib — a bundled library would not resolve inside a game"
+              exit 1
             fi
           done
           exports=$(nm -D --defined-only AppDir/usr/lib/choir/libchoir_overlay.so \
