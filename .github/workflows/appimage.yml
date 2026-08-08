@@ -43,17 +43,41 @@ jobs:
         run: pip3 install --break-system-packages meson aqtinstall
 
       # Ubuntu 24.04 ships Qt 6.4, but src/host/ui/tray.cpp needs QStyleHints::colorScheme()
-      # (6.5+) — which is also exactly why the host has to be bundled at all. qtwayland is
-      # required, not optional: it is where the Wayland platform plugins come from, and
-      # Wayland is Choir's target session. Resolve the latest 6.8 LTS patch rather than
-      # pinning one that may not exist.
+      # (6.5+) — which is also exactly why the host has to be bundled at all. Resolve the
+      # latest 6.8 LTS patch rather than pinning one that may not exist.
+      #
+      # No `-m` modules: in Qt 6 both Qt SVG and Qt Wayland live in the base desktop
+      # archive, not in Additional Libraries, and asking for them as modules is an error.
       - name: Install Qt
         run: |
           QT_VER=$(aqt list-qt linux desktop --spec "6.8" --latest-version)
           echo "Using Qt $QT_VER"
-          aqt install-qt linux desktop "$QT_VER" linux_gcc_64 -m qtsvg qtwayland -O /opt/qt
+          aqt install-qt linux desktop "$QT_VER" linux_gcc_64 -O /opt/qt
           echo "QT_ROOT=/opt/qt/$QT_VER/gcc_64" >> "$GITHUB_ENV"
           echo "/opt/qt/$QT_VER/gcc_64/bin" >> "$GITHUB_PATH"
+
+      # Assert the plugins the AppImage depends on are actually present, rather than
+      # trusting that they came in the base archive. Both failures are silent at runtime
+      # and only show up on a user's machine: no Wayland platform plugin means the host
+      # quietly falls back to XWayland, and no SVG plugin means QIcon yields blank
+      # pixmaps (the reason the host links Qt6::Svg in the first place).
+      - name: Verify the Qt plugins we bundle
+        run: |
+          missing=0
+          for p in platforms/libqwayland-generic.so platforms/libqwayland-egl.so \
+                   imageformats/libqsvg.so iconengines/libqsvgicon.so; do
+            if [ -f "$QT_ROOT/plugins/$p" ]; then
+              echo "ok      $p"
+            else
+              echo "MISSING $p"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "--- available plugins ---"
+            ls -1 "$QT_ROOT/plugins" "$QT_ROOT/plugins/platforms" || true
+            exit 1
+          fi
 
       - name: Configure and build
         run: |
