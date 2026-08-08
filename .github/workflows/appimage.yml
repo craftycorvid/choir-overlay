@@ -26,14 +26,26 @@ jobs:
     container: ubuntu:24.04
     steps:
       # Before checkout: the container is bare, and actions/checkout wants git.
+      #
+      # The X11/xcb/wayland/dbus set is not optional padding. Linking the host resolves
+      # the transitive DT_NEEDED chain of the Qt libraries (libQt6DBus needs libdbus-1,
+      # and so on), and linuxdeploy later copies those same system libraries in to make
+      # the bundled platform plugins loadable. libxcb-cursor is required by the Qt 6.5+
+      # xcb plugin specifically.
       - name: Install build dependencies
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential ninja-build pkg-config git curl ca-certificates file \
-            python3-pip desktop-file-utils libfuse2t64 \
-            libvulkan-dev libgl1-mesa-dev libegl1-mesa-dev \
-            libxkbcommon-dev libfontconfig1-dev
+            python3-pip desktop-file-utils libfuse2t64 libvulkan-dev \
+            libdbus-1-dev libglib2.0-dev libfreetype-dev libfontconfig1-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libwayland-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libx11-dev libx11-xcb-dev libxext-dev libxfixes-dev libxi-dev libxrender-dev \
+            libxcb1-dev libxcb-cursor-dev libxcb-glx0-dev libxcb-icccm4-dev \
+            libxcb-image0-dev libxcb-keysyms1-dev libxcb-randr0-dev \
+            libxcb-render-util0-dev libxcb-shape0-dev libxcb-shm0-dev libxcb-sync-dev \
+            libxcb-util-dev libxcb-xfixes0-dev libxcb-xinerama0-dev libxcb-xkb-dev
 
       - uses: actions/checkout@v4
 
