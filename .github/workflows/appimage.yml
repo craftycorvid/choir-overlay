@@ -91,9 +91,13 @@ jobs:
             exit 1
           fi
 
+      # --libdir=lib is load-bearing on Debian-family distros: meson defaults libdir to
+      # the multiarch lib/x86_64-linux-gnu there, which would put the payload somewhere
+      # appimage_payload_dir() ($APPDIR/usr/lib/choir) never looks. Arch, where this is
+      # developed, defaults to plain lib and hides the problem.
       - name: Configure and build
         run: |
-          meson setup build . --buildtype=release --prefix=/usr \
+          meson setup build . --buildtype=release --prefix=/usr --libdir=lib \
             -Dbuild_tests=false -Dstatic_backend_cxx=true
           meson compile -C build
 
@@ -113,6 +117,7 @@ jobs:
           # 2.6 MB of it. Both PKGBUILDs drop it for the same reason.
           rm -f AppDir/usr/lib/libimgui.a
 
+          # Must match appimage_payload_dir() exactly, or the host finds no payload.
           test -f AppDir/usr/lib/choir/libchoir_overlay.so
           test -f AppDir/usr/lib/choir/libchoir_gl.so
 
@@ -149,6 +154,27 @@ jobs:
             --output appimage
 
           ls -la ./*.AppImage
+
+      # linuxdeploy walks the AppDir and patchelfs what it finds, so confirm it left the
+      # payload alone: still in place for appimage_payload_dir(), still needing nothing
+      # but the C runtime (it gets dlopened into arbitrary games, where a stray
+      # dependency on a bundled Qt library would be unresolvable), and still exporting
+      # only the three Vulkan loader entrypoints the version script allows.
+      - name: Verify the payload survived bundling
+        run: |
+          for lib in libchoir_overlay.so libchoir_gl.so; do
+            path="AppDir/usr/lib/choir/$lib"
+            test -f "$path" || { echo "payload missing: $path"; ls -R AppDir/usr/lib | head -40; exit 1; }
+            echo "--- $lib ---"
+            readelf -d "$path" | grep -E 'NEEDED|RUNPATH|RPATH' || true
+            if readelf -d "$path" | grep NEEDED | grep -qvE 'libc\.so|libm\.so'; then
+              echo "unexpected dependency in $lib"; exit 1
+            fi
+          done
+          exports=$(nm -D --defined-only AppDir/usr/lib/choir/libchoir_overlay.so \
+                    | grep -c ' T ' || true)
+          echo "layer exports: $exports"
+          test "$exports" -eq 3
 
       - uses: actions/upload-artifact@v4
         with:
