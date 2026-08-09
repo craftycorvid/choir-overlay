@@ -35,6 +35,17 @@ settings window. After that, a newer AppImage keeps them in sync on its own.
 
 Requires glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+, current Fedora, SteamOS).
 
+To uninstall, run this **before** deleting the AppImage — deleting the file on its own
+leaves the overlay libraries behind, including the Vulkan layer registration that makes
+every game load them:
+
+```sh
+./Choir-*-x86_64.AppImage --uninstall
+```
+
+That clears `~/.local/lib/choir`, the layer manifest and `choir-run`, and keeps your
+settings (`~/.config/choir/config.json`) unless you delete them yourself.
+
 **Any distro, from source** — installs under `$HOME`, no root:
 
 ```sh

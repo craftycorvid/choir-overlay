@@ -91,6 +91,12 @@ dispatch, EGL/GLX via `dlsym`); `-Dstatic_backend_cxx=true` drops that to `libm 
 The host links ~70 libraries including Qt6, and **must** be bundled regardless — it needs
 `QStyleHints::colorScheme()` (Qt 6.5+) and Ubuntu 24.04 LTS ships Qt 6.4.
 
+- **Every install method needs its own uninstall**, and they cannot cover for each other:
+  pacman only owns `/usr`, `uninstall-user.sh` only knows what `install-user.sh` wrote
+  under `$HOME`, and deleting an AppImage cannot run any code at all — hence
+  `choir --uninstall` (`uninstall_backends()`). The file that matters is the implicit-layer
+  manifest: orphan it and the loader keeps injecting the layer into every Vulkan
+  application on the system, with nothing left to trace it back to.
 - `static_backend_cxx` applies **only to the two `shared_library` targets**, never the
   host: a statically-linked libstdc++ in the host would coexist with the one Qt6 links
   dynamically, putting two C++ runtimes either side of every Qt call. Off by default so

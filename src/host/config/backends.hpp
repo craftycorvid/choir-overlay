@@ -50,4 +50,13 @@ bool backends_up_to_date(const std::string& src_dir, const std::string& dst_dir)
 // the old library mapped succeeds instead of failing with ETXTBSY.
 bool install_backends(const std::string& src_dir);
 
+// Remove everything install_backends() wrote, plus ~/.local/lib/choir if that leaves it
+// empty. Idempotent, and true when there was nothing to remove.
+//
+// This exists because deleting an AppImage cannot clean up after itself. The manifest
+// registers a GLOBAL implicit layer, so without this it keeps being dlopened into every
+// Vulkan application on the system forever, with no owner and no way to trace it back.
+// Removal order mirrors install: the manifest goes FIRST.
+bool uninstall_backends();
+
 }  // namespace choir

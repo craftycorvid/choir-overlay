@@ -155,6 +155,49 @@ void test_missing_payload_leaves_no_manifest(const fs::path& tmp) {
     assert(!fs::exists(vulkan_manifest_path()));
 }
 
+// Deleting an AppImage cannot clean up after itself, so the host has to be able to.
+// The manifest matters most: left behind, it keeps the layer being dlopened into every
+// Vulkan application on the system with nothing left to own it.
+void test_uninstall_removes_everything(const fs::path& tmp) {
+    const fs::path src = tmp / "uninst" / "lib";
+    seed_payload(src, "bye");
+    assert(install_backends(src.string()));
+
+    const fs::path lib_dir = backend_lib_dir();
+    assert(fs::exists(vulkan_manifest_path()));
+    assert(fs::exists(gl_wrapper_path()));
+    assert(fs::exists(lib_dir / "libchoir_overlay.so"));
+    assert(fs::exists(lib_dir / "libchoir_gl.so"));
+
+    assert(uninstall_backends());
+
+    assert(!fs::exists(vulkan_manifest_path()));
+    assert(!fs::exists(gl_wrapper_path()));
+    assert(!fs::exists(lib_dir / "libchoir_overlay.so"));
+    assert(!fs::exists(lib_dir / "libchoir_gl.so"));
+    assert(!fs::exists(lib_dir));  // emptied, so the directory goes too
+
+    // Idempotent: uninstalling twice, or with nothing installed, is not a failure.
+    assert(uninstall_backends());
+}
+
+// Someone else's file in ~/.local/lib/choir is not ours to delete.
+void test_uninstall_keeps_a_nonempty_dir(const fs::path& tmp) {
+    const fs::path src = tmp / "keepdir" / "lib";
+    seed_payload(src, "z");
+    assert(install_backends(src.string()));
+
+    const fs::path lib_dir = backend_lib_dir();
+    write_all(lib_dir / "notes.txt", "not ours");
+
+    assert(uninstall_backends());
+    assert(!fs::exists(lib_dir / "libchoir_overlay.so"));
+    assert(fs::exists(lib_dir / "notes.txt"));
+    assert(fs::exists(lib_dir));
+
+    fs::remove_all(lib_dir);
+}
+
 }  // namespace
 
 int main() {
@@ -177,6 +220,8 @@ int main() {
     test_up_to_date_tracks_payload(tmp);
     test_reinstall_replaces_a_busy_file(tmp);
     test_missing_payload_leaves_no_manifest(tmp);
+    test_uninstall_removes_everything(tmp);
+    test_uninstall_keeps_a_nonempty_dir(tmp);
 
     fs::remove_all(tmp);
     return 0;

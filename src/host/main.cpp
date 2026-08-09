@@ -107,11 +107,36 @@ void sync_appimage_backends(choir::Config& config) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    // --version must work before any GUI is constructed (no display needed).
+    // --version and --uninstall must work before any GUI is constructed (no display
+    // needed, so they also work over ssh or from a .desktop action).
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--version") == 0) {
             std::printf("choir %s\n", CHOIR_VERSION);
             return 0;
+        }
+        if (std::strcmp(argv[i], "--uninstall") == 0) {
+            // Deleting an AppImage leaves the overlay libraries and, worse, the implicit
+            // layer manifest behind — the loader would keep injecting the layer into
+            // every Vulkan application with nothing left to own it.
+            const bool ok = choir::uninstall_backends();
+            std::printf("Removed Choir's overlay libraries from %s\n",
+                        choir::backend_lib_dir().c_str());
+            std::printf("Removed the Vulkan layer manifest and choir-run.\n");
+            if (!ok) {
+                std::fprintf(stderr,
+                             "choir: some files could not be removed; check permissions "
+                             "on ~/.local\n");
+            }
+            // Forget the install consent so a later launch asks again rather than
+            // silently reinstalling what was just deliberately removed.
+            choir::Config cfg = choir::Config::load(choir::config_path());
+            if (cfg.backend_consent != choir::Config::kBackendUnasked) {
+                cfg.backend_consent = choir::Config::kBackendUnasked;
+                cfg.save(choir::config_path());
+            }
+            std::printf("Settings kept at %s (delete it to remove them too).\n",
+                        choir::config_path().c_str());
+            return ok ? 0 : 1;
         }
     }
 

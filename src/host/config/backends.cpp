@@ -190,4 +190,27 @@ bool install_backends(const std::string& src_dir) {
     return write_atomic(vulkan_manifest_path(), layer_manifest(layer_lib.string()), 0644);
 }
 
+bool uninstall_backends() {
+    const fs::path lib_dir = backend_lib_dir();
+    bool ok = true;
+
+    // Manifest FIRST — the exact mirror of install. It is the thing that makes the
+    // loader dlopen the layer into every application, so it must stop existing before
+    // the library it names, not after.
+    for (const std::string& path : {vulkan_manifest_path(),
+                                    gl_wrapper_path(),
+                                    (lib_dir / kLayerLib).string(),
+                                    (lib_dir / kGlLib).string()}) {
+        std::error_code ec;
+        fs::remove(path, ec);  // absent is success; only a real failure sets ec
+        if (ec) ok = false;
+    }
+
+    // Take the directory too, but only if we emptied it — anything else in there is
+    // not ours to delete.
+    std::error_code ec;
+    fs::remove(lib_dir, ec);  // fails harmlessly when non-empty
+    return ok;
+}
+
 }  // namespace choir
