@@ -7,7 +7,10 @@ Comment=Discord voice overlay for Vulkan and OpenGL games (not affiliated with D
 Exec=choir
 Icon=choir
 Terminal=false
-Categories=Utility;Game;
+# Utility alone, deliberately: Game is also an XDG *main* category, so listing both
+# files Choir under two menus (desktop-file-validate warns about exactly this). Choir
+# is a tool for gamers, not a game.
+Categories=Utility;
 # XDG autostart key. install-user.sh installs this file with autostart DISABLED
 # (X-GNOME-Autostart-enabled=false) so launching choir on login is OPT-IN.
 # Run `install-user.sh --autostart` (or flip this to true) to enable it.
