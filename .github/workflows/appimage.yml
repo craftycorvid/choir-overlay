@@ -244,9 +244,13 @@ jobs:
       # Tolerates either order: the release may already exist from a manual
       # `gh release create`, or this may be the first thing to make it. --clobber keeps
       # re-runs idempotent, like packaging/aur/publish.sh.
+      # GH_REPO is required, not decoration: this job never checks the repo out (it only
+      # needs the built artifact), so gh has no git remote to infer --repo from and every
+      # command fails with "not a git repository".
       - name: Attach the AppImage to the release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
             || gh release create "$GITHUB_REF_NAME" --generate-notes
