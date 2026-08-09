@@ -17,7 +17,7 @@ name: AppImage
 
 on:
   push:
-    tags: ['v*']
+    tags: ["v*"]
   workflow_dispatch:
 
 jobs:
@@ -47,7 +47,7 @@ jobs:
             libxcb-render-util0-dev libxcb-shape0-dev libxcb-shm0-dev libxcb-sync-dev \
             libxcb-util-dev libxcb-xfixes0-dev libxcb-xinerama0-dev libxcb-xkb-dev
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # PEP 668 marks the system Python as externally managed; this container is
       # throwaway, so install straight into it rather than standing up a venv.
@@ -222,7 +222,7 @@ jobs:
 
       # Narrowly Choir-*: a bare *.AppImage glob also matches the downloaded linuxdeploy
       # tools, which would otherwise get attached to the GitHub release.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: appimage
           path: ./Choir-*-x86_64.AppImage
@@ -237,7 +237,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: appimage
 
