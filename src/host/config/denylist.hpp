@@ -12,6 +12,11 @@
 // globs ("*launcher*") match as you'd expect. Both sides are lowercased before
 // matching, so a stored "Discord" pattern matches the exe "discord".
 //
+// The server calls this for the client's comm AND for each of its argv entries:
+// comm is truncated to 15 chars and names only the interpreter of a script app
+// (`python3 -m faugus.launcher`). Stripping to the basename is what keeps that
+// safe — a directory in a game's path can't match, only the argument itself.
+//
 // Qt-free: std + <fnmatch.h> only.
 
 #include <string>

@@ -12,7 +12,9 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <string>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -37,11 +39,29 @@ std::string self_exe_name() {
     return "unknown";
 }
 
-// Build the Hello JSON: {"pid":<getpid>,"exe":"<comm>","proto":1}.
+// Read /proc/self/cmdline (NUL-separated) as a vector. comm is truncated to 15
+// chars and is the *interpreter* for script-launched apps (Faugus Launcher runs
+// as `python3 -m faugus.launcher`), so the host matches the denylist against
+// these too.
+std::vector<std::string> self_argv() {
+    std::ifstream f("/proc/self/cmdline", std::ios::binary);
+    const std::string all((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    std::vector<std::string> argv;
+    for (size_t i = 0; i < all.size();) {
+        size_t end = all.find('\0', i);
+        if (end == std::string::npos) end = all.size();
+        if (end > i) argv.emplace_back(all, i, end - i);
+        i = end + 1;
+    }
+    return argv;
+}
+
+// Build the Hello JSON: {"pid":<getpid>,"exe":"<comm>","argv":[...],"proto":1}.
 std::string hello_payload() {
     nlohmann::json j;
     j["pid"] = static_cast<int>(::getpid());
     j["exe"] = self_exe_name();
+    j["argv"] = self_argv();
     j["proto"] = 1;
     return j.dump();
 }

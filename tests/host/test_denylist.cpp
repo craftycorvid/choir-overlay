@@ -27,7 +27,7 @@ int main() {
     // --- defaults() includes the required names ---------------------------
     for (const char* required :
          {"Discord", "steam", "steamwebhelper", "gamescope", "obs", "firefox",
-          "chrome", "chromium"}) {
+          "chrome", "chromium", "faugus*", "protontricks*"}) {
         assert(defaults_contain(required) && "default denylist missing a required name");
     }
 
@@ -47,10 +47,24 @@ int main() {
     assert(d.blocks("/usr/bin/steam"));
     assert(d.blocks("/some/deep/path/firefox"));
 
+    // --- prefix tooling: matched via comm or via an argv entry ------------
+    // The server calls blocks() for the client's comm and for each argv entry,
+    // so these are the strings it actually sees.
+    assert(d.blocks("protontricks"));
+    assert(d.blocks("/usr/bin/protontricks"));  // argv[0]
+    assert(d.blocks("protontricks-la"));       // comm truncates at 15 chars
+    assert(d.blocks("faugus.launcher"));       // `python3 -m faugus.launcher`
+    assert(d.blocks("faugus.runner"));
+    assert(d.blocks("faugus-launcher"));
+
     // --- a real game is NOT blocked --------------------------------------
     assert(!d.blocks("MyGame.exe"));
     assert(!d.blocks("/usr/games/MyGame.exe"));
     assert(!d.blocks("xonotic"));
+    // ...not even when a *directory* in its argv path is denylisted: only the
+    // basename of each argument is matched.
+    assert(!d.blocks("/home/me/Games/faugus/MyGame.exe"));
+    assert(!d.blocks("/home/me/SomeLauncher/MyGame.exe"));
 
     // --- glob patterns match case-insensitively --------------------------
     Denylist g({"*launcher*"});

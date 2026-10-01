@@ -53,6 +53,14 @@ std::vector<std::string> Denylist::defaults() {
         "electron",
         "choir",
         "*launcher*",
+        // Prefix/tooling GUIs that draw through Vulkan but are never games.
+        // These are scripts, so the name that identifies them is in argv, not
+        // comm ("faugus.launcher" for `python3 -m faugus.launcher`), and comm
+        // truncates at 15 chars ("protontricks-launch" -> "protontricks-la").
+        // The glob also covers "faugus.runner", which is the window Faugus puts
+        // up when IT runs winetricks (bare winetricks uses kdialog: no Vulkan).
+        "faugus*",
+        "protontricks*",
     };
 }
 

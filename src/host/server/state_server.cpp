@@ -7,6 +7,7 @@
 #include <QLocalServer>
 #include <QLocalSocket>
 
+#include <algorithm>
 #include <cstdio>
 
 namespace choir {
@@ -117,16 +118,30 @@ void StateServer::handle_hello(Client& c, const std::string& payload) {
     if (c.active || c.inert) return;
 
     std::string exe;
+    std::vector<std::string> argv;
     try {
         nlohmann::json j = nlohmann::json::parse(payload);
         if (j.contains("exe") && j["exe"].is_string()) {
             exe = j["exe"].get<std::string>();
         }
+        if (j.contains("argv") && j["argv"].is_array()) {
+            for (const auto& el : j["argv"]) {
+                if (el.is_string()) argv.push_back(el.get<std::string>());
+            }
+        }
     } catch (...) {
         // Malformed Hello: treat the exe as empty (won't match the denylist).
     }
 
-    if (is_blocked_ && is_blocked_(exe)) {
+    // exe is /proc/self/comm: truncated to 15 chars, and merely the interpreter
+    // for script-launched apps (`python3 -m faugus.launcher`). So every argv
+    // entry gets a shot at the denylist too — Denylist matches basenames, so a
+    // directory component of a path argument can't block a game by accident.
+    const bool blocked =
+        is_blocked_ && (is_blocked_(exe) ||
+                        std::any_of(argv.begin(), argv.end(),
+                                    [this](const std::string& a) { return is_blocked_(a); }));
+    if (blocked) {
         c.inert = true;
         send_frame(c.sock, MsgType::Disabled, std::string());
         return;

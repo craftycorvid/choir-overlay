@@ -11,11 +11,11 @@
 // prefixed libchoir_ipc frame, so a plain POSIX AF_UNIX client (the layer,
 // Task 16) is wire-compatible with this QLocalServer socket.
 //
-// Denylist gating: each connection sends a Hello{pid,exe,proto}. If is_blocked
-// (built from the host's Denylist) returns true for the exe, the client gets a
-// single Disabled frame and is kept inert — it never receives snapshots or
-// avatars. Otherwise it is marked active and immediately seeded with the
-// current Snapshot and all known avatars.
+// Denylist gating: each connection sends a Hello{pid,exe,argv,proto}. If
+// is_blocked (built from the host's Denylist) returns true for the exe or for
+// any argv entry, the client gets a single Disabled frame and is kept inert —
+// it never receives snapshots or avatars. Otherwise it is marked active and
+// immediately seeded with the current Snapshot and all known avatars.
 //
 // This class is the testable core of the assembly; the production main wires
 // its set_snapshot/broadcast/broadcast_avatar to the OverlayState + AvatarCache
@@ -45,7 +45,8 @@ namespace choir {
 
 class StateServer {
 public:
-    // is_blocked(exe) decides per connection whether to disable the client.
+    // is_blocked(name) decides per connection whether to disable the client; it
+    // is called with the client's comm and with each of its argv entries.
     // Typically [&denylist](const std::string& e){ return denylist.blocks(e); }.
     explicit StateServer(std::function<bool(const std::string&)> is_blocked);
     ~StateServer();

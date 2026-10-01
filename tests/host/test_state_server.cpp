@@ -57,9 +57,10 @@ int raw_connect(const std::string& name) {
     return fd;
 }
 
-// Send a Hello frame with the given exe over the raw fd.
-void send_hello(int fd, const std::string& exe) {
-    nlohmann::json j = {{"pid", 4242}, {"exe", exe}, {"proto", 1}};
+// Send a Hello frame with the given exe (and optional argv) over the raw fd.
+void send_hello(int fd, const std::string& exe,
+                const std::vector<std::string>& argv = {}) {
+    nlohmann::json j = {{"pid", 4242}, {"exe", exe}, {"argv", argv}, {"proto", 1}};
     std::vector<uint8_t> frame;
     encode_frame(MsgType::Hello, j.dump(), frame);
     ssize_t n = ::write(fd, frame.data(), frame.size());
@@ -113,7 +114,7 @@ int main(int argc, char** argv) {
 
     const std::string sock = abstract_socket_name();
 
-    Denylist denylist({"steam", "discord"});
+    Denylist denylist({"steam", "discord", "faugus*"});
     StateServer server([&denylist](const std::string& exe) { return denylist.blocks(exe); });
 
     bool ok = server.listen();
@@ -209,6 +210,23 @@ int main(int argc, char** argv) {
 
         bool more = wait_for_frame(fd, buf, f, 300);
         assert(!more && "denylisted client must not receive broadcasts");
+
+        ::close(fd);
+    }
+
+    // --- Scenario 6: innocent comm, denylisted argv -> Disabled. ---
+    // Script apps report their interpreter as comm (Faugus Launcher runs as
+    // `python3 -m faugus.launcher`), so the argv is the only identifying part.
+    {
+        int fd = raw_connect(sock);
+        assert(fd >= 0);
+        send_hello(fd, "python3", {"/usr/bin/python3", "-m", "faugus.launcher"});
+
+        std::vector<uint8_t> buf;
+        DecodedFrame f;
+        bool got = wait_for_frame(fd, buf, f, 2000);
+        assert(got && "no frame from server for argv-denylisted Hello");
+        assert(f.type == MsgType::Disabled && "argv match should disable the client");
 
         ::close(fd);
     }
