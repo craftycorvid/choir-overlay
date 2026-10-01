@@ -14,6 +14,7 @@
 #include <EGL/egl.h>
 #include <GL/gl.h>  // core desktop GL entrypoints, for the test harness's own FBO/readback
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -198,11 +199,42 @@ int main() {
             panel[2], panel[3], far[0], far[1], far[2], far[3]);
     fprintf(stderr, "panel_drawn=%d far_is_bg=%d\n", panel_drawn, far_is_bg);
 
+    // Mute glyph: re-render the same row self-muted. The glyph must sit right after the
+    // name (the row reaches further right than unmuted, but well short of the panel's
+    // right edge at x=236) and be monochrome (no red right of the red avatar, x>=66).
+    auto row_right = [&]() {
+        int r = 0;
+        for (int y = 164; y < 196; ++y)
+            for (int x = 66; x < 240; ++x)
+                if (!is_bg(at(x, y))) r = std::max(r, x);
+        return r;
+    };
+    auto has_red = [&]() {
+        for (int y = 164; y < 196; ++y)
+            for (int x = 66; x < 240; ++x) {
+                const uint8_t* q = at(x, y);
+                if (q[0] > 150 && q[1] < 120 && q[2] < 120) return true;
+            }
+        return false;
+    };
+    const int unmuted_r = row_right();
+    snap.participants[0].self_mute = true;
+    glClear(GL_COLOR_BUFFER_BIT);
+    renderer.draw(&snap, textures, choir::StateClient::instance(),
+                  choir::Extent2D{uint32_t(W), uint32_t(H)}, /*now_ms*/ 0);
+    glFinish();
+    glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+    const int muted_r = row_right();
+    const bool glyph_beside_name = muted_r > unmuted_r + 10 && muted_r < 200;
+    const bool glyph_mono = !has_red();
+    fprintf(stderr, "row right edge: unmuted=%d muted=%d glyph_beside_name=%d mono=%d\n",
+            unmuted_r, muted_r, glyph_beside_name, glyph_mono);
+
     renderer.shutdown();
     textures.shutdown();
     std::remove(avatar_path.c_str());
 
-    if (!panel_drawn || !far_is_bg) {
+    if (!panel_drawn || !far_is_bg || !glyph_beside_name || !glyph_mono) {
         fprintf(stderr, "GL golden FAIL\n");
         return 1;
     }

@@ -73,6 +73,7 @@ constexpr float kRing = 2.5f;          // speaking-ring thickness
 constexpr float kNamePadX = 6.0f;      // per-name background "pill" horizontal padding
 constexpr float kNamePadY = 2.0f;      // per-name background "pill" vertical padding
 constexpr float kNameRound = 5.0f;     // per-name background corner rounding
+constexpr ImU32 kPillBg = IM_COL32(24, 26, 32, 205);  // per-name "pill" background
 
 // Per-participant opacity easing: dim when idle, quick fade up when speaking.
 constexpr float kIdleAlpha = 0.40f;    // opacity of a non-speaking indicator
@@ -131,27 +132,33 @@ ImVec2 anchored_pos(Anchor anchor, Extent2D extent, ImVec2 size, float margin) {
     return ImVec2(x, y);
 }
 
-// Draw a small mic-off glyph (a mic capsule + stand crossed by a red slash) centered
+// Monochrome "off" slash across a glyph: a pill-coloured cutout under a glyph-coloured
+// line, so it stays legible where it crosses the same-coloured shape beneath.
+void draw_slash(ImDrawList* dl, float cx, float cy, float r, ImU32 fg, float a) {
+    const float d = r * 0.75f;  // short of r so it stays inside the name pill
+    const ImVec2 p0(cx - d, cy - d), p1(cx + d, cy + d);
+    dl->AddLine(p0, p1, scale_alpha(kPillBg, a), 4.0f);
+    dl->AddLine(p0, p1, fg, 1.5f);
+}
+
+// Draw a small mic-off glyph (a mic capsule + stand crossed by a slash) centered
 // near (cx,cy) at radius r. Pure draw-list primitives — no font/icon assets.
 void draw_mic_off(ImDrawList* dl, float cx, float cy, float r, float a) {
     const ImU32 fg = scale_alpha(IM_COL32(230, 230, 235, 255), a);
-    const ImU32 slash = scale_alpha(IM_COL32(235, 70, 70, 255), a);
     // Mic body: a vertical rounded capsule.
     const float bw = r * 0.7f, bh = r * 1.1f;
     dl->AddRectFilled(ImVec2(cx - bw * 0.5f, cy - bh * 0.6f),
                       ImVec2(cx + bw * 0.5f, cy + bh * 0.2f), fg, bw * 0.5f);
     // Stand: a short vertical line below the body.
     dl->AddLine(ImVec2(cx, cy + bh * 0.2f), ImVec2(cx, cy + bh * 0.55f), fg, 1.5f);
-    // Red diagonal slash = "muted".
-    dl->AddLine(ImVec2(cx - r, cy - r), ImVec2(cx + r, cy + r), slash, 2.0f);
+    draw_slash(dl, cx, cy, r, fg, a);  // = "muted"
 }
 
-// Draw a small headphones-off glyph (a headband arc + two earcups crossed by a red
+// Draw a small headphones-off glyph (a headband arc + two earcups crossed by a
 // slash) centered near (cx,cy) at radius r. Distinct from the mic-off glyph so muted
 // vs deafened are visually distinguishable.
 void draw_deaf(ImDrawList* dl, float cx, float cy, float r, float a) {
     const ImU32 fg = scale_alpha(IM_COL32(230, 230, 235, 255), a);
-    const ImU32 slash = scale_alpha(IM_COL32(235, 70, 70, 255), a);
     // Headband: a half-circle arc across the top.
     dl->PathArcTo(ImVec2(cx, cy), r * 0.85f, kPi, 2.0f * kPi, 12);
     dl->PathStroke(fg, ImDrawFlags_None, 1.8f);
@@ -161,8 +168,7 @@ void draw_deaf(ImDrawList* dl, float cx, float cy, float r, float a) {
                       ImVec2(cx - r * 0.85f + ew * 0.5f, cy + eh * 0.8f), fg, ew * 0.4f);
     dl->AddRectFilled(ImVec2(cx + r * 0.85f - ew * 0.5f, cy - eh * 0.2f),
                       ImVec2(cx + r * 0.85f + ew * 0.5f, cy + eh * 0.8f), fg, ew * 0.4f);
-    // Red diagonal slash = "deafened".
-    dl->AddLine(ImVec2(cx - r, cy - r), ImVec2(cx + r, cy + r), slash, 2.0f);
+    draw_slash(dl, cx, cy, r, fg, a);  // = "deafened"
 }
 
 // Draw a generic "person" silhouette (head + shoulders) centered at (cx,cy) within
@@ -422,24 +428,26 @@ void draw_voice_panel(const Snapshot& snap, IAvatarTextures& textures, StateClie
             }
 
             // Display name, vertically centered against the avatar, with its own
-            // translucent rounded "pill" background behind just the text.
+            // translucent rounded "pill" background behind the text and, when muted or
+            // deafened, the glyph right after it. Deaf implies no audio at all, so it
+            // takes precedence over mic-off.
             const char* name = p.display_name.c_str();
             const float tx = ax + avatar + kAvatarTextGap * s;
             const float name_y = cy - line_h * 0.5f;
             const ImVec2 tsz = ImGui::CalcTextSize(name);
             const float nbx = kNamePadX * s, nby = kNamePadY * s;
-            dl->AddRectFilled(ImVec2(tx - nbx, name_y - nby),
-                              ImVec2(tx + tsz.x + nbx, name_y + line_h + nby),
-                              scale_alpha(IM_COL32(24, 26, 32, 205), a), kNameRound * s);
-            dl->AddText(ImVec2(tx, name_y), scale_alpha(IM_COL32(235, 235, 240, 255), a), name);
-
-            // Mute/deaf glyphs at the right edge of the row. Deaf implies no audio at
-            // all, so prefer the headphones-off glyph; otherwise show mic-off if muted.
-            const float gx = pos.x + size.x - pad - radius * 0.6f;
+            const bool deaf = p.deaf || p.self_deaf;
+            const bool muted = deaf || p.mute || p.self_mute;
             const float gr = radius * 0.55f;
-            if (p.deaf || p.self_deaf) {
+            const float gx = tx + tsz.x + nbx + gr;  // glyph centre, one pad after the name
+            const float pill_r = (muted ? gx + gr : tx + tsz.x) + nbx;
+            dl->AddRectFilled(ImVec2(tx - nbx, name_y - nby),
+                              ImVec2(pill_r, name_y + line_h + nby),
+                              scale_alpha(kPillBg, a), kNameRound * s);
+            dl->AddText(ImVec2(tx, name_y), scale_alpha(IM_COL32(235, 235, 240, 255), a), name);
+            if (deaf) {
                 draw_deaf(dl, gx, cy, gr, a);
-            } else if (p.mute || p.self_mute) {
+            } else if (muted) {
                 draw_mic_off(dl, gx, cy, gr, a);
             }
 

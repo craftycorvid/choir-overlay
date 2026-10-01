@@ -279,11 +279,23 @@ int main(int argc, char** argv) {
     check(any_pixel(rgb, w, h, 26, py0, 31, py1, is_green),
           "no green speaking-ring pixel beside an avatar");
 
-    // Carol (blue, self_mute) is the only muted user: her red mute-glyph slash sits at the
-    // panel's right edge. Scan x[208..240) over the full panel height — the only red at the
-    // right edge is her glyph (avatars are at the left).
-    check(any_pixel(rgb, w, h, 208, py0, 240, py1, is_red),
-          "no red mute glyph in Carol's row");
+    // Carol (blue, self_mute) is the only muted user: her monochrome mute glyph sits right
+    // after her name, inside the name pill. Rows are y[26..58) Alice, y[106..138) Carol;
+    // "Alice" and "Carol" render within a few px of each other, so Carol's row reaching
+    // well past Alice's (but not the panel's right edge) is the glyph. No red anywhere
+    // right of the avatars proves it is monochrome.
+    auto rightmost = [&](uint32_t y0, uint32_t y1) {
+        uint32_t r = 0;
+        for (uint32_t y = y0; y < y1; ++y)
+            for (uint32_t x = 70; x < 240; ++x)
+                if (!is_app_blue(pixel(rgb, w, x, y)) && x > r) r = x;
+        return r;
+    };
+    const uint32_t alice_r = rightmost(26, 58), carol_r = rightmost(106, 138);
+    std::printf("golden: rightmost drawn x — Alice %u, Carol %u\n", alice_r, carol_r);
+    check(carol_r > alice_r + 10, "no mute glyph after Carol's name");
+    check(carol_r < 200, "mute glyph is right-aligned, not beside Carol's name");
+    check(!any_pixel(rgb, w, h, 70, py0, 240, py1, is_red), "mute glyph is not monochrome");
 
     // A far/empty corner (bottom-left) stays the app blue.
     check(is_app_blue(pixel(rgb, w, 20, 236)), "far pixel (20,236) is not app blue");
